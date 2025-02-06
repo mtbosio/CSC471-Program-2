@@ -36,19 +36,10 @@ public:
 	// Our shader program
 	std::shared_ptr<Program> solidColorProg;
 
-	// Shape to be used (from  file) - modify to support multiple
-	shared_ptr<Shape> mesh;
+	std::vector<std::shared_ptr<Shape>> meshes;
 
-	//a different mesh
-	shared_ptr<Shape> bunny;
-
-	//example data that might be useful when trying to compute bounds on multi-shape
-	vec3 gMin;
-
-	//animation data
-	float sTheta = 0;
-	float gTrans = 0;
-
+	float yaw = 0;
+	
 	void keyCallback(GLFWwindow *window, int key, int scancode, int action, int mods)
 	{
 		if (key == GLFW_KEY_ESCAPE && action == GLFW_PRESS)
@@ -56,10 +47,10 @@ public:
 			glfwSetWindowShouldClose(window, GL_TRUE);
 		}
 		if (key == GLFW_KEY_A && action == GLFW_PRESS) {
-			gTrans -= 0.2;
+			yaw -= 0.2;
 		}
 		if (key == GLFW_KEY_D && action == GLFW_PRESS) {
-			gTrans += 0.2;
+			yaw += 0.2;
 		}
 		if (key == GLFW_KEY_Z && action == GLFW_PRESS) {
 			glPolygonMode( GL_FRONT_AND_BACK, GL_LINE );
@@ -118,63 +109,77 @@ public:
 		solidColorProg->addAttribute("vertNor");
 	}
 
+
+
 	void initGeom(const std::string& resourceDirectory)
 	{
+		std::vector<std::string> objFiles = {"cartoon_flower.obj", "steve.obj", "creeper.obj", "cube.obj"};
+		int count = 0;
+		for (const auto& file : objFiles) {
+			std::vector<tinyobj::shape_t> TOshapes;
+			std::vector<tinyobj::material_t> objMaterials;
+			std::string errStr;
 
-		//EXAMPLE set up to read one shape from one obj file - convert to read several
-		// Initialize mesh
-		// Load geometry
- 		// Some obj files contain material information.We'll ignore them for this assignment.
- 		vector<tinyobj::shape_t> TOshapes;
- 		vector<tinyobj::material_t> objMaterials;
- 		string errStr;
-		//load in the mesh and make the shape(s)
- 		bool rc = tinyobj::LoadObj(TOshapes, objMaterials, errStr, (resourceDirectory + "/SmoothSphere.obj").c_str());
-		
-		if (!rc) {
-			cerr << errStr << endl;
-		} else {
-			//for now all our shapes will not have textures - change in later labs
-			mesh = make_shared<Shape>(false);
-			mesh->createShape(TOshapes[0]);
-			mesh->measure();
-			mesh->init();
+			bool rc = tinyobj::LoadObj(TOshapes, objMaterials, errStr, (resourceDirectory + "/" + file).c_str());
+
+			if (!rc) {
+				std::cerr << "Error loading " << file << ": " << errStr << std::endl;
+				continue;
+			}
+
+			// Create a Shape for each shape in the OBJ file
+			for (auto& toShape : TOshapes) { 
+				count += 1;
+				auto shape = std::make_shared<Shape>(false);
+				tinyobj::shape_t mutableShape = toShape; 
+				shape->createShape(mutableShape);
+				shape->measure();
+				shape->init();
+				meshes.push_back(shape);
+			}
+
 		}
-
-		//load in another mesh and make the shape(s)
-		vector<tinyobj::shape_t> TOshapes2;
- 		rc = tinyobj::LoadObj(TOshapes2, objMaterials, errStr, (resourceDirectory + "/bunny.obj").c_str());
-		
-		if (!rc) {
-			cerr << errStr << endl;
-		} else {
-			//for now all our shapes will not have textures - change in later labs
-			bunny = make_shared<Shape>(false);
-			bunny->createShape(TOshapes2[0]);
-			bunny->measure();
-			bunny->init();
-		}
-
-		//read out information stored in the shape about its size - something like this...
-		//then do something with that information.....
-		gMin.x = mesh->min.x;
-		gMin.y = mesh->min.y;
+		std::cout << count << std::endl;
 	}
+
 
 	/* helper for sending top of the matrix strack to GPU */
 	void setModel(std::shared_ptr<Program> prog, std::shared_ptr<MatrixStack>M) {
 		glUniformMatrix4fv(prog->getUniform("M"), 1, GL_FALSE, value_ptr(M->topMatrix()));
    }
 
+	/* helper for animating steve to bend over the flower */
+	void animateSteve(float steveBendAngle) {
+		mat4 hipTranslation = glm::translate(glm::mat4(1.0f), vec3(0, 5, 0));
+		mat4 hipScale = glm::scale(glm::mat4(1.0f), vec3(0.01));
+		mat4 hipPivot = glm::translate(glm::mat4(1.0f), vec3(0, -4, 0));
+		mat4 hipRotation = glm::rotate(glm::mat4(1.0f), radians(steveBendAngle), vec3(0, 0, 1));
+
+		mat4 hipTransform = hipTranslation * hipPivot * hipRotation * glm::inverse(hipPivot) * hipScale;
+
+		glUniformMatrix4fv(prog->getUniform("M"), 1, GL_FALSE, value_ptr(hipTransform));
+	}
+
+
 	/* helper function to set model trasnforms */
-  	void setModel(shared_ptr<Program> curS, vec3 trans, float rotY, float rotX, float sc) {
+  	void setModel(shared_ptr<Program> curS, vec3 trans, float rotY, float rotX, float rotZ, float sc) {
   		mat4 Trans = glm::translate( glm::mat4(1.0f), trans);
   		mat4 RotX = glm::rotate( glm::mat4(1.0f), rotX, vec3(1, 0, 0));
   		mat4 RotY = glm::rotate( glm::mat4(1.0f), rotY, vec3(0, 1, 0));
+		mat4 RotZ = glm::rotate(glm::mat4(1.0f), rotZ, vec3(0, 0, 1));
+
   		mat4 ScaleS = glm::scale(glm::mat4(1.0f), vec3(sc));
   		mat4 ctm = Trans*RotX*RotY*ScaleS;
   		glUniformMatrix4fv(curS->getUniform("M"), 1, GL_FALSE, value_ptr(ctm));
   	}
+
+	void setFloor(shared_ptr<Program> curS) {
+		mat4 Trans = glm::translate(glm::mat4(1.0f), vec3(0, -2, 0));
+
+		mat4 ScaleS = glm::scale(glm::mat4(1.0f), vec3(40, 0.1, 40));
+		mat4 ctm = Trans * ScaleS;
+		glUniformMatrix4fv(curS->getUniform("M"), 1, GL_FALSE, value_ptr(ctm));
+	}
 
 	void render() {
 		// Get current frame buffer size.
@@ -186,7 +191,7 @@ public:
 		glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
 
 		//Use the matrix stack for Lab 6
-		float aspect = width/(float)height;
+		float aspect = width / (float)height;
 
 		// Create the matrix stacks - please leave these alone for now
 		auto Projection = make_shared<MatrixStack>();
@@ -199,81 +204,54 @@ public:
 
 		// View is global translation along negative z for now
 		View->pushMatrix();
-			View->loadIdentity();
-			View->translate(vec3(0, 0, -5));
+		View->loadIdentity();
+		View->rotate(radians(15.0f), vec3(0, 1, 0));
+		View->translate(vec3(10, -5, -25));
+		View->rotate(yaw, vec3(0, 1, 0));
 
-		// Draw a solid colored sphere
-		solidColorProg->bind();
-		//send the projetion and view for solid shader
-		glUniformMatrix4fv(solidColorProg->getUniform("P"), 1, GL_FALSE, value_ptr(Projection->topMatrix()));
-		glUniformMatrix4fv(solidColorProg->getUniform("V"), 1, GL_FALSE, value_ptr(View->topMatrix()));
-		//send in the color to use
-		glUniform3f(solidColorProg->getUniform("solidColor"), 0.1, 0.2, 0.5);
-
-		//use helper function that uses glm to create some transform matrices
-		setModel(prog, vec3(-1.7, -1.7, 0), 0, 0, 0.5);
-		mesh->draw(prog);
-
-		solidColorProg->unbind();
-
-		// Draw base Hierarchical person
 		prog->bind();
 		glUniformMatrix4fv(prog->getUniform("P"), 1, GL_FALSE, value_ptr(Projection->topMatrix()));
 		glUniformMatrix4fv(prog->getUniform("V"), 1, GL_FALSE, value_ptr(View->topMatrix()));
 
-		//use helper function that uses glm to create some transform matrices
-		setModel(prog, vec3(1.7, -1.7, 0), 0, 0, 0.5);
-		bunny->draw(prog);
+		// flower
+		setModel(prog, vec3(5, -2, 0), 0, 0, 0, 7);
+		meshes[0]->draw(prog);
+		meshes[1]->draw(prog);
+		meshes[2]->draw(prog);
 
+		// draw bottom half of steve
+		setModel(prog, vec3(0, 5, 0), 0, 0, 0, 0.01);
+		meshes[3]->draw(prog);
+		meshes[4]->draw(prog);
 
-		// draw hierarchical mesh using matrix stack
-		Model->pushMatrix();
-			Model->loadIdentity();
-			Model->translate(vec3(gTrans, 0, 0));
-			/* draw top cube - aka head */
-			Model->pushMatrix();
-				Model->translate(vec3(0, 1.4, 0));
-				Model->scale(vec3(0.5, 0.5, 0.5));
-				setModel(prog, Model);
-				mesh->draw(prog);
-			Model->popMatrix();
-			//draw the torso with these transforms
-			Model->pushMatrix();
-			  Model->scale(vec3(1.25, 1.35, 1.25));
-			  setModel(prog, Model);
-			  mesh->draw(prog);
-			Model->popMatrix();
-			// draw the upper 'arm' - relative 
-			//note you must change this to include 3 components!
-			Model->pushMatrix();
-			  //place at shoulder
-			  Model->translate(vec3(0.8, 0.8, 0));
-			  //rotate shoulder joint
-			  Model->rotate(sTheta, vec3(0, 0, 1));
-			  //move to shoulder joint
-			  Model->translate(vec3(0.8, 0, 0));
-	
-			    //now draw lower arm - this is INCOMPLETE and you will add a 3rd component
-			  	//right now this is in the SAME place as the upper arm
-			  	Model->pushMatrix();
-			      Model->scale(vec3(0.8, 0.25, 0.25));
-			  	  setModel(prog, Model);
-			  	  mesh->draw(prog);
-			  	Model->popMatrix();
+		// animate and draw top half of steve
+		float steveBendAngle = (sin(glfwGetTime()) - 1.0f) * 25.0f;
+		animateSteve(steveBendAngle);
+		meshes[5]->draw(prog);
+		meshes[6]->draw(prog);
+		meshes[7]->draw(prog);
+		meshes[8]->draw(prog);
 
-			  //Do final scale ONLY to upper arm then draw
-			  //non-uniform scale
-			  Model->scale(vec3(0.8, 0.25, 0.25));
-			  setModel(prog, Model);
-			  mesh->draw(prog);
-			Model->popMatrix();
-		
-		Model->popMatrix();
-
+		// Unbind shader
 		prog->unbind();
+		
+		// Draw solid colored assets
+		solidColorProg->bind();
+		//send the projetion and view for solid shader
+		glUniformMatrix4fv(solidColorProg->getUniform("P"), 1, GL_FALSE, value_ptr(Projection->topMatrix()));
+		glUniformMatrix4fv(solidColorProg->getUniform("V"), 1, GL_FALSE, value_ptr(View->topMatrix()));
+		
+		// creeper (as green)
+		glUniform3f(solidColorProg->getUniform("solidColor"), 0, 255, 0);
+		setModel(prog, vec3(-5, 1, 0), 30, 0, 0, 3);
+		meshes[9]->draw(prog);
+		
+		// floor (as brown)
+		glUniform3f(solidColorProg->getUniform("solidColor"), 118.0f / 255.0f, 85.0f / 255.0f, 43.0f / 255.0f);
+		setFloor(prog);
+		meshes[10]->draw(prog);
 
-		//animation update example
-		sTheta = sin(glfwGetTime());
+		solidColorProg->unbind();
 
 		// Pop matrix stacks.
 		Projection->popMatrix();
