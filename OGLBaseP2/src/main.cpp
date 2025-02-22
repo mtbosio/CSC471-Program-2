@@ -13,6 +13,7 @@
 #include "Shape.h"
 #include "MatrixStack.h"
 #include "WindowManager.h"
+#include "Texture.h"
 
 #define TINYOBJLOADER_IMPLEMENTATION
 #include <tiny_obj_loader/tiny_obj_loader.h>
@@ -33,8 +34,17 @@ public:
 	// Our shader program
 	std::shared_ptr<Program> prog;
 
-	// Our shader program
-	std::shared_ptr<Program> solidColorProg;
+	//Our shader program for textures
+	std::shared_ptr<Program> texProg;
+
+	//global data for ground plane - direct load constant defined CPU data to GPU (not obj)
+	GLuint GrndBuffObj, GrndNorBuffObj, GrndTexBuffObj, GIndxBuffObj;
+	int g_GiboLen;
+	//ground VAO
+	GLuint GroundVertexArrayID;
+
+	//the image to use as a texture (ground)
+	shared_ptr<Texture> texture0;
 
 	std::vector<std::shared_ptr<Shape>> meshes;
 
@@ -49,8 +59,10 @@ public:
 	float walkDuration = 4.0f;
     float explodeDuration = 0.7f;
 	float delayDuration = 1.0f; 
-
     float creeperX = creeperStartX;
+
+	// light data
+	float lightTrans = 0;
 
 	
 	void keyCallback(GLFWwindow *window, int key, int scancode, int action, int mods)
@@ -64,6 +76,12 @@ public:
 		}
 		if (key == GLFW_KEY_D && action == GLFW_PRESS) {
 			yaw += 0.2;
+		}
+		if (key == GLFW_KEY_Q && action == GLFW_PRESS){
+			lightTrans -= 0.25;
+		}
+		if (key == GLFW_KEY_E && action == GLFW_PRESS){
+			lightTrans += 0.25;
 		}
 		if (key == GLFW_KEY_Z && action == GLFW_PRESS) {
 			glPolygonMode( GL_FRONT_AND_BACK, GL_LINE );
@@ -106,23 +124,34 @@ public:
 		prog->addUniform("P");
 		prog->addUniform("V");
 		prog->addUniform("M");
+		prog->addUniform("MatAmb");
+		prog->addUniform("MatDif");
+		prog->addUniform("MatShine");
+		prog->addUniform("MatSpec");
+		prog->addUniform("lightPos");
 		prog->addAttribute("vertPos");
 		prog->addAttribute("vertNor");
 
 		// Initialize the GLSL program.
-		solidColorProg = make_shared<Program>();
-		solidColorProg->setVerbose(true);
-		solidColorProg->setShaderNames(resourceDirectory + "/simple_vert.glsl", resourceDirectory + "/solid_frag.glsl");
-		solidColorProg->init();
-		solidColorProg->addUniform("P");
-		solidColorProg->addUniform("V");
-		solidColorProg->addUniform("M");
-		solidColorProg->addUniform("solidColor");
-		solidColorProg->addAttribute("vertPos");
-		solidColorProg->addAttribute("vertNor");
+		texProg = make_shared<Program>();
+		texProg->setVerbose(true);
+		texProg->setShaderNames(resourceDirectory + "/tex_vert.glsl", resourceDirectory + "/tex_frag0.glsl");
+		texProg->init();
+		texProg->addUniform("P");
+		texProg->addUniform("V");
+		texProg->addUniform("M");
+		texProg->addUniform("Texture0");
+		texProg->addAttribute("vertPos");
+		texProg->addAttribute("vertNor");
+		texProg->addAttribute("vertTex");
+
+		//read in a load the texture
+		texture0 = make_shared<Texture>();
+  		texture0->setFilename(resourceDirectory + "/minecraft_grass.jpg");
+  		texture0->init();
+  		texture0->setUnit(0);
+  		texture0->setWrapModes(GL_REPEAT, GL_REPEAT);
 	}
-
-
 
 	void initGeom(const std::string& resourceDirectory) {
 		std::vector<std::string> objFiles = {"cartoon_flower.obj", "steve.obj", "creeper.obj", "cube.obj"};
@@ -203,30 +232,106 @@ public:
 		// floor 10
 		normalizeMesh(meshes[10], meshes[10]->min, meshes[10]->max);
 
-	
+		initGround();
 		std::cout << "Total shapes loaded: " << count << std::endl;
 	}
 
 	void normalizeMesh(std::shared_ptr<Shape>& shape, const glm::vec3& globalMin, const glm::vec3& globalMax) {
-		// Compute global center
+
 		glm::vec3 center = (globalMin + globalMax) * 0.5f;
-		// Compute the largest extent
+
 		float largest_extent = glm::max(glm::max(globalMax.x - globalMin.x, 
 												 globalMax.y - globalMin.y), 
 												 globalMax.z - globalMin.z);
 	
-		// Scale factor
 		float scale_factor = 2.0f / largest_extent;
 
-		std::cout << "Min Bound: (" << globalMin.x << ", " << globalMin.y << ", " << globalMin.z << ")\n";
-		std::cout << "Max Bound: (" << globalMax.x << ", " << globalMax.y << ", " << globalMax.z << ")\n";
-		std::cout << "Largest Extent: " << largest_extent << "\n";
-		std::cout << "Scale Factor: " << scale_factor << "\n";
-	
-		// Apply transformations
 		shape->setTranslation(-1.0f * center);
 		shape->setScale(vec3(scale_factor));
 
+	}
+
+	//directly pass quad for the ground to the GPU
+	void initGround() {
+		float tileFactor = 10.0f;
+		float g_groundSize = 10;
+		float g_groundY = 0;
+
+  		// A x-z plane at y = g_groundY of dimension [-g_groundSize, g_groundSize]^2
+		float GrndPos[] = {
+			-g_groundSize, g_groundY, -g_groundSize,
+			-g_groundSize, g_groundY,  g_groundSize,
+			g_groundSize, g_groundY,  g_groundSize,
+			g_groundSize, g_groundY, -g_groundSize
+		};
+
+		float GrndNorm[] = {
+			0, 1, 0,
+			0, 1, 0,
+			0, 1, 0,
+			0, 1, 0,
+			0, 1, 0,
+			0, 1, 0
+		};
+
+		static GLfloat GrndTex[] = {
+			0, 0,
+			0, tileFactor,
+			tileFactor, tileFactor,
+			tileFactor, 0
+		};
+
+      	unsigned short idx[] = {0, 1, 2, 0, 2, 3};
+
+		//generate the ground VAO
+      	glGenVertexArrays(1, &GroundVertexArrayID);
+      	glBindVertexArray(GroundVertexArrayID);
+
+      	g_GiboLen = 6;
+      	glGenBuffers(1, &GrndBuffObj);
+      	glBindBuffer(GL_ARRAY_BUFFER, GrndBuffObj);
+      	glBufferData(GL_ARRAY_BUFFER, sizeof(GrndPos), GrndPos, GL_STATIC_DRAW);
+
+      	glGenBuffers(1, &GrndNorBuffObj);
+      	glBindBuffer(GL_ARRAY_BUFFER, GrndNorBuffObj);
+      	glBufferData(GL_ARRAY_BUFFER, sizeof(GrndNorm), GrndNorm, GL_STATIC_DRAW);
+
+      	glGenBuffers(1, &GrndTexBuffObj);
+      	glBindBuffer(GL_ARRAY_BUFFER, GrndTexBuffObj);
+      	glBufferData(GL_ARRAY_BUFFER, sizeof(GrndTex), GrndTex, GL_STATIC_DRAW);
+
+      	glGenBuffers(1, &GIndxBuffObj);
+     	glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, GIndxBuffObj);
+      	glBufferData(GL_ELEMENT_ARRAY_BUFFER, sizeof(idx), idx, GL_STATIC_DRAW);
+    }
+
+	//code to draw the ground plane
+	void drawGround(shared_ptr<Program> curS) {
+		curS->bind();
+		glBindVertexArray(GroundVertexArrayID);
+		texture0->bind(curS->getUniform("Texture0"));
+		//draw the ground plane 
+		setModel(curS, meshes[10], vec3(0, -1, 0), 0, 0, 0, vec3(1,1,1));
+		glEnableVertexAttribArray(0);
+		glBindBuffer(GL_ARRAY_BUFFER, GrndBuffObj);
+		glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 0, 0);
+
+		glEnableVertexAttribArray(1);
+		glBindBuffer(GL_ARRAY_BUFFER, GrndNorBuffObj);
+		glVertexAttribPointer(1, 3, GL_FLOAT, GL_FALSE, 0, 0);
+
+		glEnableVertexAttribArray(2);
+		glBindBuffer(GL_ARRAY_BUFFER, GrndTexBuffObj);
+		glVertexAttribPointer(2, 2, GL_FLOAT, GL_FALSE, 0, 0);
+
+		// draw!
+		glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, GIndxBuffObj);
+		glDrawElements(GL_TRIANGLES, g_GiboLen, GL_UNSIGNED_SHORT, 0);
+
+		glDisableVertexAttribArray(0);
+		glDisableVertexAttribArray(1);
+		glDisableVertexAttribArray(2);
+		curS->unbind();
 	}
 	
 	/* helper for animating steve to bend over the flower */
@@ -254,6 +359,47 @@ public:
   		glUniformMatrix4fv(curS->getUniform("M"), 1, GL_FALSE, value_ptr(ctm));
   	}
 
+	 //helper function to pass material data to the GPU
+	 void setMaterial(shared_ptr<Program> curS, int i) {
+		switch (i) {
+			case 0: // Light Green
+				glUniform3f(curS->getUniform("MatAmb"), 0.1f, 0.25f, 0.1f);  // Soft green ambient
+				glUniform3f(curS->getUniform("MatDif"), 0.4f, 0.9f, 0.4f);   // Bright green diffuse
+				glUniform3f(curS->getUniform("MatSpec"), 0.2f, 0.5f, 0.2f);  // Moderate green specular
+				glUniform1f(curS->getUniform("MatShine"), 50.0f);            // Medium shininess
+				break;
+	
+			case 1: // (Kept as is) Light Purple
+				glUniform3f(curS->getUniform("MatAmb"), 0.063, 0.038, 0.1);
+				glUniform3f(curS->getUniform("MatDif"), 0.63, 0.38, 1.0);
+				glUniform3f(curS->getUniform("MatSpec"), 0.3, 0.2, 0.5);
+				glUniform1f(curS->getUniform("MatShine"), 4.0);
+				break;
+	
+			case 2: // Light Blue
+				glUniform3f(curS->getUniform("MatAmb"), 0.05f, 0.1f, 0.2f);   // Soft blue ambient
+				glUniform3f(curS->getUniform("MatDif"), 0.4f, 0.6f, 0.9f);   // Sky blue diffuse
+				glUniform3f(curS->getUniform("MatSpec"), 0.2f, 0.4f, 0.6f);  // Moderate blue specular
+				glUniform1f(curS->getUniform("MatShine"), 60.0f);            // Medium shininess
+				break;
+	
+			case 3: // Dark Blue
+				glUniform3f(curS->getUniform("MatAmb"), 0.02f, 0.02f, 0.1f);  // Deep blue ambient
+				glUniform3f(curS->getUniform("MatDif"), 0.1f, 0.2f, 0.8f);    // Strong blue diffuse
+				glUniform3f(curS->getUniform("MatSpec"), 0.1f, 0.2f, 0.9f);   // High specular highlight
+				glUniform1f(curS->getUniform("MatShine"), 100.0f);            // Higher shininess for a sharper highlight
+				break;
+	
+			case 4: // Light Skin Color
+				glUniform3f(curS->getUniform("MatAmb"), 0.2f, 0.15f, 0.1f);   // Warm skin-tone ambient
+				glUniform3f(curS->getUniform("MatDif"), 0.9f, 0.7f, 0.6f);    // Soft peach diffuse
+				glUniform3f(curS->getUniform("MatSpec"), 0.3f, 0.2f, 0.2f);   // Subtle specular highlight
+				glUniform1f(curS->getUniform("MatShine"), 20.0f);             // Lower shininess for soft skin appearance
+				break;
+		}
+	}
+	
+
 	void render() {
 		timeElapsed += 0.02f;
 		// Get current frame buffer size.
@@ -279,21 +425,24 @@ public:
 		// View is global translation along negative z for now
 		View->pushMatrix();
 		View->loadIdentity();
-		View->translate(vec3(3, 0, -7));
+		View->translate(vec3(0, 0, -7));
 		View->rotate(radians(-35.0f), vec3(0, 1, 0));
 		View->rotate(yaw, vec3(0, 1, 0));
 
 		prog->bind();
 		glUniformMatrix4fv(prog->getUniform("P"), 1, GL_FALSE, value_ptr(Projection->topMatrix()));
 		glUniformMatrix4fv(prog->getUniform("V"), 1, GL_FALSE, value_ptr(View->topMatrix()));
+		glUniform3f(prog->getUniform("lightPos"), -2.0 + lightTrans, 2.0, 2.0);
 
 		// draw flower
+		setMaterial(prog, 1); // purple for flower
 		setModel(prog, meshes[0], vec3(0,-0.5f,0), 0, 0, 0, vec3(0.5,0.5f,0.5));
 		meshes[0]->draw(prog);
 		meshes[1]->draw(prog);
 		meshes[2]->draw(prog);
 		
 		// draw bottom half of steve
+		setMaterial(prog, 3); // dark blue for pants
 		setModel(prog, meshes[3], vec3(-1.5f,0,0), 0, 0, 0, vec3(1,1,1));
 		meshes[3]->draw(prog);
 		meshes[4]->draw(prog);
@@ -301,12 +450,14 @@ public:
 		// draw animated top half of steve
 		float steveBendAngle = (sin(glfwGetTime()) - 1.0f) * 25.0f;
 		animateSteve(prog, meshes[5], steveBendAngle);
+		setMaterial(prog, 4); // skin color
 		meshes[5]->draw(prog);
 		meshes[6]->draw(prog);
 		meshes[7]->draw(prog);
+		setMaterial(prog, 2); // shirt color
 		meshes[8]->draw(prog);
 		
-		
+		setMaterial(prog, 0);
 		// Draw animated creeper
 		if (timeElapsed < walkDuration) {
 			// Move creeper towards Steve
@@ -330,55 +481,20 @@ public:
 			creeperX = creeperStartX;
 		}
 	
-		// Set creeper transformation
-		setModel(prog, meshes[9], vec3(creeperX, 0, 0), 30, 0, 0, vec3(creeperScale, 1, creeperScale));
-		meshes[9]->draw(prog);
-
-		// draw floor
-		setModel(prog, meshes[10], vec3(0, -2, 0), 0, 0, 0, vec3(40,0.2,40));
-		meshes[10]->draw(prog);
-		
-		/*
-		// flower
-		setModel(prog, vec3(5, -2, 0), 0, 0, 0, 7);
-		meshes[0]->draw(prog);
-		meshes[1]->draw(prog);
-		meshes[2]->draw(prog);
-
-		// draw bottom half of steve
-		setModel(prog, vec3(0, 5, 0), 0, 0, 0, 0.01);
-		meshes[3]->draw(prog);
-		meshes[4]->draw(prog);
-
-		// animate and draw top half of steve
-		float steveBendAngle = (sin(glfwGetTime()) - 1.0f) * 25.0f;
-		animateSteve(steveBendAngle);
-		meshes[5]->draw(prog);
-		meshes[6]->draw(prog);
-		meshes[7]->draw(prog);
-		meshes[8]->draw(prog);
-
-		// Unbind shader
-		prog->unbind();
-		
-		// Draw solid colored assets
-		solidColorProg->bind();
-		//send the projetion and view for solid shader
-		glUniformMatrix4fv(solidColorProg->getUniform("P"), 1, GL_FALSE, value_ptr(Projection->topMatrix()));
-		glUniformMatrix4fv(solidColorProg->getUniform("V"), 1, GL_FALSE, value_ptr(View->topMatrix()));
-		
-		// creeper (as green)
-		glUniform3f(solidColorProg->getUniform("solidColor"), 0, 255, 0);
-		setModel(prog, vec3(-5, 1, 0), 30, 0, 0, 3);
+		setModel(prog, meshes[9], vec3(creeperX, 0, 0), 33, 0, 0, vec3(creeperScale, 1, creeperScale));
 		meshes[9]->draw(prog);
 		
-		// floor (as brown)
-		glUniform3f(solidColorProg->getUniform("solidColor"), 118.0f / 255.0f, 85.0f / 255.0f, 43.0f / 255.0f);
-		setFloor(prog);
-		meshes[10]->draw(prog);
-		*/
-
 		prog->unbind();
+
+		//switch shaders to the texture mapping shader and draw the ground
+		texProg->bind();
+		glUniformMatrix4fv(texProg->getUniform("P"), 1, GL_FALSE, value_ptr(Projection->topMatrix()));
+		glUniformMatrix4fv(texProg->getUniform("V"), 1, GL_FALSE, value_ptr(View->topMatrix()));
+		glUniformMatrix4fv(texProg->getUniform("M"), 1, GL_FALSE, value_ptr(Model->topMatrix()));
+				
+		drawGround(texProg);
+
+		texProg->unbind();
 
 		// Pop matrix stacks.
 		Projection->popMatrix();
