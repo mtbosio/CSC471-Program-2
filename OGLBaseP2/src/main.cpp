@@ -39,6 +39,19 @@ public:
 	std::vector<std::shared_ptr<Shape>> meshes;
 
 	float yaw = 0;
+
+	// variables for creeper walking and explosion
+	float timeElapsed = 0.0f;
+	float creeperStartX = -5.0f;
+	float creeperEndX = -2.8f;
+	float creeperScale = 1.0f;
+	bool exploding = false;
+	float walkDuration = 4.0f;
+    float explodeDuration = 0.7f;
+	float delayDuration = 1.0f; 
+
+    float creeperX = creeperStartX;
+
 	
 	void keyCallback(GLFWwindow *window, int key, int scancode, int action, int mods)
 	{
@@ -111,77 +124,138 @@ public:
 
 
 
-	void initGeom(const std::string& resourceDirectory)
-	{
+	void initGeom(const std::string& resourceDirectory) {
 		std::vector<std::string> objFiles = {"cartoon_flower.obj", "steve.obj", "creeper.obj", "cube.obj"};
+	
 		int count = 0;
 		for (const auto& file : objFiles) {
 			std::vector<tinyobj::shape_t> TOshapes;
 			std::vector<tinyobj::material_t> objMaterials;
 			std::string errStr;
-
+	
 			bool rc = tinyobj::LoadObj(TOshapes, objMaterials, errStr, (resourceDirectory + "/" + file).c_str());
-
+	
 			if (!rc) {
 				std::cerr << "Error loading " << file << ": " << errStr << std::endl;
 				continue;
 			}
-
-			// Create a Shape for each shape in the OBJ file
+	
+			// Process each shape
 			for (auto& toShape : TOshapes) { 
 				count += 1;
 				auto shape = std::make_shared<Shape>(false);
 				tinyobj::shape_t mutableShape = toShape; 
 				shape->createShape(mutableShape);
-				shape->measure();
+				shape->measure();  // Computes min and max per shape
 				shape->init();
+	
 				meshes.push_back(shape);
 			}
-
 		}
-		std::cout << count << std::endl;
+	
+		// now compute global bounds for each of the objects in the scene. So if its a multi object, must do it for all objects.
+		// flower 0 - 2
+		float minX = meshes[0]->min.x;
+		float minY = meshes[0]->min.y;
+		float minZ = meshes[0]->min.z;
+		float maxX = meshes[0]->max.x;
+		float maxY = meshes[0]->max.y;
+		float maxZ = meshes[0]->max.z;
+		
+		for(int i = 0; i <= 2; i++){
+			minX = glm::min(meshes[i]->min.x, minX);
+			minY = glm::min(meshes[i]->min.y, minY);
+			minZ = glm::min(meshes[i]->min.z, minZ);
+			
+			maxX = glm::max(meshes[i]->max.x, maxX);
+			maxY = glm::max(meshes[i]->max.y, maxY);
+			maxZ = glm::max(meshes[i]->max.z, maxZ);
+		}
+		for(int i = 0; i <= 2; i++){
+			normalizeMesh(meshes[i], vec3(minX, minY, minZ), vec3(maxX, maxY, maxZ));
+		}
+
+		// steve 3 - 8
+		minX = meshes[3]->min.x;
+		minY = meshes[3]->min.y;
+		minZ = meshes[3]->min.z;
+		maxX = meshes[3]->max.x;
+		maxY = meshes[3]->max.y;
+		maxZ = meshes[3]->max.z;
+		
+		for(int i = 3; i <= 8; i++){
+			minX = glm::min(meshes[i]->min.x, minX);
+			minY = glm::min(meshes[i]->min.y, minY);
+			minZ = glm::min(meshes[i]->min.z, minZ);
+			
+			maxX = glm::max(meshes[i]->max.x, maxX);
+			maxY = glm::max(meshes[i]->max.y, maxY);
+			maxZ = glm::max(meshes[i]->max.z, maxZ);
+		}
+		
+		for(int i = 3; i <= 8; i++){
+			normalizeMesh(meshes[i], vec3(minX, minY, minZ), vec3(maxX, maxY, maxZ));
+		}
+
+		// creeper 9
+		normalizeMesh(meshes[9], meshes[9]->min, meshes[9]->max);
+
+		// floor 10
+		normalizeMesh(meshes[10], meshes[10]->min, meshes[10]->max);
+
+	
+		std::cout << "Total shapes loaded: " << count << std::endl;
 	}
 
+	void normalizeMesh(std::shared_ptr<Shape>& shape, const glm::vec3& globalMin, const glm::vec3& globalMax) {
+		// Compute global center
+		glm::vec3 center = (globalMin + globalMax) * 0.5f;
+		// Compute the largest extent
+		float largest_extent = glm::max(glm::max(globalMax.x - globalMin.x, 
+												 globalMax.y - globalMin.y), 
+												 globalMax.z - globalMin.z);
+	
+		// Scale factor
+		float scale_factor = 2.0f / largest_extent;
 
-	/* helper for sending top of the matrix strack to GPU */
-	void setModel(std::shared_ptr<Program> prog, std::shared_ptr<MatrixStack>M) {
-		glUniformMatrix4fv(prog->getUniform("M"), 1, GL_FALSE, value_ptr(M->topMatrix()));
-   }
+		std::cout << "Min Bound: (" << globalMin.x << ", " << globalMin.y << ", " << globalMin.z << ")\n";
+		std::cout << "Max Bound: (" << globalMax.x << ", " << globalMax.y << ", " << globalMax.z << ")\n";
+		std::cout << "Largest Extent: " << largest_extent << "\n";
+		std::cout << "Scale Factor: " << scale_factor << "\n";
+	
+		// Apply transformations
+		shape->setTranslation(-1.0f * center);
+		shape->setScale(vec3(scale_factor));
 
+	}
+	
 	/* helper for animating steve to bend over the flower */
-	void animateSteve(float steveBendAngle) {
-		mat4 hipTranslation = glm::translate(glm::mat4(1.0f), vec3(0, 5, 0));
-		mat4 hipScale = glm::scale(glm::mat4(1.0f), vec3(0.01));
-		mat4 hipPivot = glm::translate(glm::mat4(1.0f), vec3(0, -4, 0));
+	void animateSteve(shared_ptr<Program> curS, std::shared_ptr<Shape> shape, float steveBendAngle) {
+		mat4 hipPivot = glm::translate(glm::mat4(1.0f), vec3(0, -0.3, 0));
 		mat4 hipRotation = glm::rotate(glm::mat4(1.0f), radians(steveBendAngle), vec3(0, 0, 1));
-
-		mat4 hipTransform = hipTranslation * hipPivot * hipRotation * glm::inverse(hipPivot) * hipScale;
+		mat4 hipTranslation = glm::translate(glm::mat4(1.0f), vec3(-1.52, 0, 0));
+		mat4 hipTransform =  hipTranslation * hipPivot * hipRotation * glm::inverse(hipPivot) * shape->getModelMatrix();
 
 		glUniformMatrix4fv(prog->getUniform("M"), 1, GL_FALSE, value_ptr(hipTransform));
 	}
 
-
 	/* helper function to set model trasnforms */
-  	void setModel(shared_ptr<Program> curS, vec3 trans, float rotY, float rotX, float rotZ, float sc) {
+  	void setModel(shared_ptr<Program> curS, std::shared_ptr<Shape> shape, vec3 trans, float rotY, float rotX, float rotZ, vec3 sc) {
   		mat4 Trans = glm::translate( glm::mat4(1.0f), trans);
   		mat4 RotX = glm::rotate( glm::mat4(1.0f), rotX, vec3(1, 0, 0));
   		mat4 RotY = glm::rotate( glm::mat4(1.0f), rotY, vec3(0, 1, 0));
 		mat4 RotZ = glm::rotate(glm::mat4(1.0f), rotZ, vec3(0, 0, 1));
 
-  		mat4 ScaleS = glm::scale(glm::mat4(1.0f), vec3(sc));
-  		mat4 ctm = Trans*RotX*RotY*ScaleS;
+  		mat4 ScaleS = glm::scale(glm::mat4(1.0f), sc);
+
+		mat4 normTransform = shape->getModelMatrix();
+    
+  		mat4 ctm = Trans*RotX*RotY*ScaleS * normTransform;
   		glUniformMatrix4fv(curS->getUniform("M"), 1, GL_FALSE, value_ptr(ctm));
   	}
 
-	void setFloor(shared_ptr<Program> curS) {
-		mat4 Trans = glm::translate(glm::mat4(1.0f), vec3(0, -2, 0));
-
-		mat4 ScaleS = glm::scale(glm::mat4(1.0f), vec3(40, 0.1, 40));
-		mat4 ctm = Trans * ScaleS;
-		glUniformMatrix4fv(curS->getUniform("M"), 1, GL_FALSE, value_ptr(ctm));
-	}
-
 	void render() {
+		timeElapsed += 0.02f;
 		// Get current frame buffer size.
 		int width, height;
 		glfwGetFramebufferSize(windowManager->getHandle(), &width, &height);
@@ -205,14 +279,66 @@ public:
 		// View is global translation along negative z for now
 		View->pushMatrix();
 		View->loadIdentity();
-		View->rotate(radians(15.0f), vec3(0, 1, 0));
-		View->translate(vec3(10, -5, -25));
+		View->translate(vec3(3, 0, -7));
+		View->rotate(radians(-35.0f), vec3(0, 1, 0));
 		View->rotate(yaw, vec3(0, 1, 0));
 
 		prog->bind();
 		glUniformMatrix4fv(prog->getUniform("P"), 1, GL_FALSE, value_ptr(Projection->topMatrix()));
 		glUniformMatrix4fv(prog->getUniform("V"), 1, GL_FALSE, value_ptr(View->topMatrix()));
 
+		// draw flower
+		setModel(prog, meshes[0], vec3(0,-0.5f,0), 0, 0, 0, vec3(0.5,0.5f,0.5));
+		meshes[0]->draw(prog);
+		meshes[1]->draw(prog);
+		meshes[2]->draw(prog);
+		
+		// draw bottom half of steve
+		setModel(prog, meshes[3], vec3(-1.5f,0,0), 0, 0, 0, vec3(1,1,1));
+		meshes[3]->draw(prog);
+		meshes[4]->draw(prog);
+
+		// draw animated top half of steve
+		float steveBendAngle = (sin(glfwGetTime()) - 1.0f) * 25.0f;
+		animateSteve(prog, meshes[5], steveBendAngle);
+		meshes[5]->draw(prog);
+		meshes[6]->draw(prog);
+		meshes[7]->draw(prog);
+		meshes[8]->draw(prog);
+		
+		
+		// Draw animated creeper
+		if (timeElapsed < walkDuration) {
+			// Move creeper towards Steve
+			creeperScale = 1.0f;
+			float t = timeElapsed / walkDuration; 
+			creeperX = (1 - t) * creeperStartX + t * creeperEndX;
+		} else if (timeElapsed < walkDuration + explodeDuration) {
+			// Start explosion
+			exploding = true;
+			float t = (timeElapsed - walkDuration) / explodeDuration;
+			creeperScale = 1.0f + 0.5f * t;
+		} else if (timeElapsed < walkDuration + explodeDuration + delayDuration) {
+			// Delay after explosion before resetting
+			exploding = false;
+			creeperScale = 0;
+		} else {
+			// Reset after explosion and delay
+			timeElapsed = 0.0f;
+			exploding = false;
+			creeperScale = 1.0f;
+			creeperX = creeperStartX;
+		}
+	
+		// Set creeper transformation
+		setModel(prog, meshes[9], vec3(creeperX, 0, 0), 30, 0, 0, vec3(creeperScale, 1, creeperScale));
+		meshes[9]->draw(prog);
+
+		// draw floor
+		setModel(prog, meshes[10], vec3(0, -2, 0), 0, 0, 0, vec3(40,0.2,40));
+		meshes[10]->draw(prog);
+		
+		/*
 		// flower
 		setModel(prog, vec3(5, -2, 0), 0, 0, 0, 7);
 		meshes[0]->draw(prog);
@@ -250,8 +376,9 @@ public:
 		glUniform3f(solidColorProg->getUniform("solidColor"), 118.0f / 255.0f, 85.0f / 255.0f, 43.0f / 255.0f);
 		setFloor(prog);
 		meshes[10]->draw(prog);
+		*/
 
-		solidColorProg->unbind();
+		prog->unbind();
 
 		// Pop matrix stacks.
 		Projection->popMatrix();
