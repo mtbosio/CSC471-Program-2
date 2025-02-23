@@ -64,6 +64,7 @@ public:
 	// light data
 	float lightTrans = 0;
 
+	int bunnyColor = 5;
 	
 	void keyCallback(GLFWwindow *window, int key, int scancode, int action, int mods)
 	{
@@ -88,6 +89,13 @@ public:
 		}
 		if (key == GLFW_KEY_Z && action == GLFW_RELEASE) {
 			glPolygonMode( GL_FRONT_AND_BACK, GL_FILL );
+		}
+		if (key == GLFW_KEY_M && action == GLFW_RELEASE) {
+			if(bunnyColor == 5){
+				bunnyColor = 6;
+			} else {
+				bunnyColor = 5;
+			}
 		}
 	}
 
@@ -154,7 +162,7 @@ public:
 	}
 
 	void initGeom(const std::string& resourceDirectory) {
-		std::vector<std::string> objFiles = {"cartoon_flower.obj", "steve.obj", "creeper.obj", "cube.obj"};
+		std::vector<std::string> objFiles = {"cartoon_flower.obj", "steve.obj", "creeper.obj", "cube.obj", "bunnyNoNorm.obj", "minecraft_tree.obj"};
 	
 		int count = 0;
 		for (const auto& file : objFiles) {
@@ -232,6 +240,12 @@ public:
 		// floor 10
 		normalizeMesh(meshes[10], meshes[10]->min, meshes[10]->max);
 
+		// bunny 11
+		normalizeMesh(meshes[11], meshes[11]->min, meshes[11]->max);
+
+		// tree 12 - 13
+		normalizeMesh(meshes[12], meshes[12]->min, meshes[12]->max);
+		normalizeMesh(meshes[13], meshes[13]->min, meshes[13]->max);
 		initGround();
 		std::cout << "Total shapes loaded: " << count << std::endl;
 	}
@@ -369,7 +383,7 @@ public:
 				glUniform1f(curS->getUniform("MatShine"), 50.0f);            // Medium shininess
 				break;
 	
-			case 1: // (Kept as is) Light Purple
+			case 1: // Light Purple
 				glUniform3f(curS->getUniform("MatAmb"), 0.063, 0.038, 0.1);
 				glUniform3f(curS->getUniform("MatDif"), 0.63, 0.38, 1.0);
 				glUniform3f(curS->getUniform("MatSpec"), 0.3, 0.2, 0.5);
@@ -396,9 +410,22 @@ public:
 				glUniform3f(curS->getUniform("MatSpec"), 0.3f, 0.2f, 0.2f);   // Subtle specular highlight
 				glUniform1f(curS->getUniform("MatShine"), 20.0f);             // Lower shininess for soft skin appearance
 				break;
-		}
-	}
 	
+			case 5: // Brown Bunny
+				glUniform3f(curS->getUniform("MatAmb"), 0.15f, 0.1f, 0.05f);  // Warm brown ambient
+				glUniform3f(curS->getUniform("MatDif"), 0.5f, 0.3f, 0.1f);    // Earthy brown diffuse
+				glUniform3f(curS->getUniform("MatSpec"), 0.2f, 0.1f, 0.05f);  // Soft brown specular highlight
+				glUniform1f(curS->getUniform("MatShine"), 25.0f);             // Moderate shininess for fur appearance
+				break;
+	
+			case 6: // White Bunny
+				glUniform3f(curS->getUniform("MatAmb"), 0.3f, 0.3f, 0.3f);    // Neutral white ambient
+				glUniform3f(curS->getUniform("MatDif"), 0.9f, 0.9f, 0.9f);    // Bright white diffuse
+				glUniform3f(curS->getUniform("MatSpec"), 0.5f, 0.5f, 0.5f);   // High specular reflection
+				glUniform1f(curS->getUniform("MatShine"), 80.0f);             // Higher shininess for a smooth, shiny appearance
+				break;
+		}
+	}	
 
 	void render() {
 		timeElapsed += 0.02f;
@@ -483,6 +510,25 @@ public:
 	
 		setModel(prog, meshes[9], vec3(creeperX, 0, 0), 33, 0, 0, vec3(creeperScale, 1, creeperScale));
 		meshes[9]->draw(prog);
+
+		// draw bunny
+		setMaterial(prog, bunnyColor);
+		setModel(prog, meshes[11], vec3(2,-0.5f,0), 0, 0, 0, vec3(0.5f,0.5f,0.5f));
+		meshes[11]->draw(prog);
+
+		// draw first tree
+		setMaterial(prog, 5);
+		setModel(prog, meshes[12], vec3(3,0.5f,-3.5), 0, 0, 0, vec3(2.0f,2.0f,2.0f));
+		meshes[12]->draw(prog);
+		setMaterial(prog, 0);
+		meshes[13]->draw(prog);
+
+		// draw second tree
+		setMaterial(prog, 5);
+		setModel(prog, meshes[12], vec3(-3,0.5f,-3.5), 0, 0, 0, vec3(2.0f,2.0f,2.0f));
+		meshes[12]->draw(prog);
+		setMaterial(prog, 0);
+		meshes[13]->draw(prog);
 		
 		prog->unbind();
 

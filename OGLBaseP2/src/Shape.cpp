@@ -73,12 +73,46 @@ void Shape::init()
 
     // Send the normal array to the GPU
     if (norBuf.empty()) {
-        norBufID = 0;
-    } else {
-        glGenBuffers(1, &norBufID);
-        glBindBuffer(GL_ARRAY_BUFFER, norBufID);
-        glBufferData(GL_ARRAY_BUFFER, norBuf.size() * sizeof(float), &norBuf[0], GL_STATIC_DRAW);
+        norBuf.resize(posBuf.size(), 0.0f); // Same size as posBuf, initialized to 0
+
+        for (size_t i = 0; i < eleBuf.size(); i += 3) {
+            // vertex indices
+            unsigned int idx0 = eleBuf[i];
+            unsigned int idx1 = eleBuf[i + 1];
+            unsigned int idx2 = eleBuf[i + 2];
+
+            // vertex positions
+            glm::vec3 v0(posBuf[3 * idx0], posBuf[3 * idx0 + 1], posBuf[3 * idx0 + 2]);
+            glm::vec3 v1(posBuf[3 * idx1], posBuf[3 * idx1 + 1], posBuf[3 * idx1 + 2]);
+            glm::vec3 v2(posBuf[3 * idx2], posBuf[3 * idx2 + 1], posBuf[3 * idx2 + 2]);
+
+            // compute face normal
+            glm::vec3 edge1 = v1 - v0;
+            glm::vec3 edge2 = v2 - v0;
+            glm::vec3 faceNormal = glm::normalize(glm::cross(edge1, edge2));
+
+            // add face normal to each vertex normal
+            for (int j = 0; j < 3; j++) {
+                norBuf[3 * idx0 + j] += faceNormal[j];
+                norBuf[3 * idx1 + j] += faceNormal[j];
+                norBuf[3 * idx2 + j] += faceNormal[j];
+            }
+        }
+
+        // normalize
+        for (size_t i = 0; i < norBuf.size(); i += 3) {
+            glm::vec3 normal(norBuf[i], norBuf[i + 1], norBuf[i + 2]);
+            normal = glm::normalize(normal);
+            norBuf[i] = normal.x;
+            norBuf[i + 1] = normal.y;
+            norBuf[i + 2] = normal.z;
+        }
     }
+    
+    glGenBuffers(1, &norBufID);
+    glBindBuffer(GL_ARRAY_BUFFER, norBufID);
+    glBufferData(GL_ARRAY_BUFFER, norBuf.size() * sizeof(float), &norBuf[0], GL_STATIC_DRAW);
+    
 
     // Send the texture array to the GPU - for now no textures
     if (texBuf.empty() || texOff) {
