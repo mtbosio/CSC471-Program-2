@@ -22,8 +22,29 @@
 #include <glm/gtc/type_ptr.hpp>
 #include <glm/gtc/matrix_transform.hpp>
 
+#include <vector>
+#include "ChunkData.h"
+#include "ChunkMesh.h"
+
+#include "Bezier.h"
+#include "Spline.h"
+
 using namespace std;
 using namespace glm;
+
+// Hash function for glm::vec3
+struct Vec3Hash {
+	size_t operator()(const vec3& v) const {
+		return hash<float>()(v.x) ^ (hash<float>()(v.y) << 1) ^ (hash<float>()(v.z) << 2);
+	}
+};
+
+// Equality function for unordered_map
+struct Vec3Equal {
+	bool operator()(const vec3& v1, const vec3& v2) const {
+		return v1.x == v2.x && v1.y == v2.y && v1.z == v2.z;
+	}
+};
 
 class Application : public EventCallbacks {
 
@@ -37,23 +58,38 @@ public:
 	//Our shader program for textures
 	std::shared_ptr<Program> texProg;
 
-	//global data for ground plane - direct load constant defined CPU data to GPU (not obj)
-	GLuint GrndBuffObj, GrndNorBuffObj, GrndTexBuffObj, GIndxBuffObj;
-	int g_GiboLen;
-	//ground VAO
-	GLuint GroundVertexArrayID;
+	// shader program for terrain
+	std::shared_ptr<Program> voxelProg;
 
-	//the image to use as a texture (ground)
+	// images
 	shared_ptr<Texture> texture0;
+	shared_ptr<Texture> texture1;
+	shared_ptr<Texture> texture2; // block texture
 
 	std::vector<std::shared_ptr<Shape>> meshes;
 
-	float yaw = 0;
+	double theta = -M_PI / 2;
+	double phi = 0.0;
+
+	// camera movement
+	int radius = 1;
+	vec3 eye = vec3(0,5,10);
+	vec3 lookAt = vec3(0,0,-1);
+	mat4 View;
+	vec3 up = vec3(0,1,0);
+	vec3 forward = normalize(lookAt);
+    vec3 right = normalize(cross(forward, up));
+	float gX = 0;
+	float gZ = 0;
+	float speed = 1.5f;
+	// tour variables
+	Spline splinepath[2];
+	bool tour = false;
 
 	// variables for creeper walking and explosion
 	float timeElapsed = 0.0f;
-	float creeperStartX = -5.0f;
-	float creeperEndX = -2.8f;
+	float creeperStartX = -20.0f;
+	float creeperEndX = -18.1f;
 	float creeperScale = 1.0f;
 	bool exploding = false;
 	float walkDuration = 4.0f;
@@ -64,20 +100,36 @@ public:
 	// light data
 	float lightTrans = 0;
 
-	int bunnyColor = 5;
-	
+	// randomly generated terrain data
+	static const int GRID_SIZE = 3; 
+
+	// Store chunks
+	unordered_map<vec3, ChunkData*, Vec3Hash, Vec3Equal> chunks;
+	unordered_map<vec3, ChunkMesh*, Vec3Hash, Vec3Equal> chunkMeshes;
+
 	void keyCallback(GLFWwindow *window, int key, int scancode, int action, int mods)
 	{
 		if (key == GLFW_KEY_ESCAPE && action == GLFW_PRESS)
 		{
 			glfwSetWindowShouldClose(window, GL_TRUE);
 		}
-		if (key == GLFW_KEY_A && action == GLFW_PRESS) {
-			yaw -= 0.2;
+		// movement
+		if (key == GLFW_KEY_W && action == GLFW_REPEAT) {
+			eye += forward * speed;
 		}
-		if (key == GLFW_KEY_D && action == GLFW_PRESS) {
-			yaw += 0.2;
+		if (key == GLFW_KEY_A && action == GLFW_REPEAT) {
+			eye -= right * speed;
 		}
+		if (key == GLFW_KEY_S && action == GLFW_REPEAT){
+			eye -= forward * speed;
+		}
+		if (key == GLFW_KEY_D && action == GLFW_REPEAT){
+			eye += right * speed;
+		}
+		if (key == GLFW_KEY_G && action == GLFW_PRESS){
+			tour = !tour;
+		}
+		// light movement
 		if (key == GLFW_KEY_Q && action == GLFW_PRESS){
 			lightTrans -= 0.25;
 		}
@@ -90,13 +142,22 @@ public:
 		if (key == GLFW_KEY_Z && action == GLFW_RELEASE) {
 			glPolygonMode( GL_FRONT_AND_BACK, GL_FILL );
 		}
-		if (key == GLFW_KEY_M && action == GLFW_RELEASE) {
-			if(bunnyColor == 5){
-				bunnyColor = 6;
-			} else {
-				bunnyColor = 5;
-			}
-		}
+	}
+
+	void scrollCallback(GLFWwindow* window, double deltaX, double deltaY) {
+		int width, height;
+
+		glfwGetFramebufferSize(window, &width, &height);
+		//code for pitch and yaw variablge updates
+
+		theta -= (deltaX / width) * M_PI * 2;
+		phi += (deltaY / height) * M_PI * 2;
+		phi = clamp(phi, -80.0 * M_PI / 180, 80 * M_PI / 180);
+		double x = radius*cos(phi)*cos(theta);
+		double y = radius*sin(phi);
+		double z = radius*cos(phi)*cos((M_PI/2)-theta);
+		
+		lookAt = vec3(x, y, z);
 	}
 
 	void mouseCallback(GLFWwindow *window, int button, int action, int mods)
@@ -148,21 +209,52 @@ public:
 		texProg->addUniform("P");
 		texProg->addUniform("V");
 		texProg->addUniform("M");
+		texProg->addUniform("flip");
 		texProg->addUniform("Texture0");
+		texProg->addUniform("MatShine");
+		texProg->addUniform("lightPos");
 		texProg->addAttribute("vertPos");
 		texProg->addAttribute("vertNor");
 		texProg->addAttribute("vertTex");
 
-		//read in a load the texture
+		// voxel shaders
+		voxelProg = make_shared<Program>();
+		voxelProg->setVerbose(true);
+		voxelProg->setShaderNames(resourceDirectory + "/voxel_vert.glsl", resourceDirectory + "/voxel_frag.glsl");
+		voxelProg->init();
+		voxelProg->addUniform("P");
+		voxelProg->addUniform("V");
+		voxelProg->addUniform("M");
+		voxelProg->addUniform("flip");
+		voxelProg->addUniform("Texture0");
+		voxelProg->addUniform("MatShine");
+		voxelProg->addUniform("lightPos");
+		voxelProg->addAttribute("vertPos");
+		voxelProg->addAttribute("vertNor");
+		voxelProg->addAttribute("vertTex");
+
+
+		//read in a load the textures
+		// grass texture
 		texture0 = make_shared<Texture>();
   		texture0->setFilename(resourceDirectory + "/minecraft_grass.jpg");
   		texture0->init();
   		texture0->setUnit(0);
   		texture0->setWrapModes(GL_REPEAT, GL_REPEAT);
+
+		// sky texture
+		texture1 = make_shared<Texture>();
+		texture1->setFilename(resourceDirectory + "/cartoonSky.png");
+		texture1->init();
+		texture1->setUnit(1);
+		texture1->setWrapModes(GL_REPEAT, GL_REPEAT);
+
+		splinepath[0] = Spline(glm::vec3(-24,5,10), glm::vec3(-22,0,10), glm::vec3(-22,-5, 0), 5);
+        splinepath[1] = Spline(glm::vec3(-22,-5, 0), glm::vec3(-22,-5, 0), glm::vec3(-24,-5, -10), 5);
 	}
 
 	void initGeom(const std::string& resourceDirectory) {
-		std::vector<std::string> objFiles = {"cartoon_flower.obj", "steve.obj", "creeper.obj", "cube.obj", "bunnyNoNorm.obj", "minecraft_tree.obj"};
+		std::vector<std::string> objFiles = {"cartoon_flower.obj", "steve.obj", "creeper.obj", "cube.obj", "bunnyNoNorm.obj", "minecraft_tree.obj", "sphereWTex.obj"};
 	
 		int count = 0;
 		for (const auto& file : objFiles) {
@@ -180,7 +272,14 @@ public:
 			// Process each shape
 			for (auto& toShape : TOshapes) { 
 				count += 1;
-				auto shape = std::make_shared<Shape>(false);
+				shared_ptr<Shape> shape;
+				if(count == 15){
+					shape = std::make_shared<Shape>(true);
+					cout << "Loaded textured shape!" << endl;
+				} else {
+					shape = std::make_shared<Shape>(false);
+				}
+				
 				tinyobj::shape_t mutableShape = toShape; 
 				shape->createShape(mutableShape);
 				shape->measure();  // Computes min and max per shape
@@ -246,7 +345,12 @@ public:
 		// tree 12 - 13
 		normalizeMesh(meshes[12], meshes[12]->min, meshes[12]->max);
 		normalizeMesh(meshes[13], meshes[13]->min, meshes[13]->max);
-		initGround();
+
+		// sphere 14
+		normalizeMesh(meshes[14], meshes[14]->min, meshes[14]->max);
+
+		initChunks();
+
 		std::cout << "Total shapes loaded: " << count << std::endl;
 	}
 
@@ -265,94 +369,52 @@ public:
 
 	}
 
-	//directly pass quad for the ground to the GPU
-	void initGround() {
-		float tileFactor = 10.0f;
-		float g_groundSize = 10;
-		float g_groundY = 0;
+	void initChunks() {
+		for (int x = -GRID_SIZE; x < GRID_SIZE; x++) {
+			for (int y = -GRID_SIZE; y < GRID_SIZE; y++) {
+				for (int z = -GRID_SIZE; z < GRID_SIZE; z++) {
+					vec3 pos = vec3(x, y, z);
+					chunks[pos] = new ChunkData(x, y, z); // Store chunk data
+					chunkMeshes[pos] = new ChunkMesh(*chunks[pos]); // Store chunk mesh
+					chunkMeshes[pos]->generateMesh(); // Generate mesh
+				}
+			}
+		}
+	}
+	
+	// Render the chunks
+	void renderChunks() {
+		for (const auto& pair : chunkMeshes) {
+			vec3 chunkCoords = pair.first;
+			ChunkMesh* mesh = pair.second;
+			mat4 Model = glm::translate(mat4(1.0f), mesh->chunkData.getChunkCoords()); // Offset by chunk size
+			glUniformMatrix4fv(voxelProg->getUniform("M"), 1, GL_FALSE, value_ptr(Model));
+	
+			mesh->render();
+		}
+	}
 
-  		// A x-z plane at y = g_groundY of dimension [-g_groundSize, g_groundSize]^2
-		float GrndPos[] = {
-			-g_groundSize, g_groundY, -g_groundSize,
-			-g_groundSize, g_groundY,  g_groundSize,
-			g_groundSize, g_groundY,  g_groundSize,
-			g_groundSize, g_groundY, -g_groundSize
-		};
-
-		float GrndNorm[] = {
-			0, 1, 0,
-			0, 1, 0,
-			0, 1, 0,
-			0, 1, 0,
-			0, 1, 0,
-			0, 1, 0
-		};
-
-		static GLfloat GrndTex[] = {
-			0, 0,
-			0, tileFactor,
-			tileFactor, tileFactor,
-			tileFactor, 0
-		};
-
-      	unsigned short idx[] = {0, 1, 2, 0, 2, 3};
-
-		//generate the ground VAO
-      	glGenVertexArrays(1, &GroundVertexArrayID);
-      	glBindVertexArray(GroundVertexArrayID);
-
-      	g_GiboLen = 6;
-      	glGenBuffers(1, &GrndBuffObj);
-      	glBindBuffer(GL_ARRAY_BUFFER, GrndBuffObj);
-      	glBufferData(GL_ARRAY_BUFFER, sizeof(GrndPos), GrndPos, GL_STATIC_DRAW);
-
-      	glGenBuffers(1, &GrndNorBuffObj);
-      	glBindBuffer(GL_ARRAY_BUFFER, GrndNorBuffObj);
-      	glBufferData(GL_ARRAY_BUFFER, sizeof(GrndNorm), GrndNorm, GL_STATIC_DRAW);
-
-      	glGenBuffers(1, &GrndTexBuffObj);
-      	glBindBuffer(GL_ARRAY_BUFFER, GrndTexBuffObj);
-      	glBufferData(GL_ARRAY_BUFFER, sizeof(GrndTex), GrndTex, GL_STATIC_DRAW);
-
-      	glGenBuffers(1, &GIndxBuffObj);
-     	glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, GIndxBuffObj);
-      	glBufferData(GL_ELEMENT_ARRAY_BUFFER, sizeof(idx), idx, GL_STATIC_DRAW);
-    }
-
-	//code to draw the ground plane
-	void drawGround(shared_ptr<Program> curS) {
-		curS->bind();
-		glBindVertexArray(GroundVertexArrayID);
-		texture0->bind(curS->getUniform("Texture0"));
-		//draw the ground plane 
-		setModel(curS, meshes[10], vec3(0, -1, 0), 0, 0, 0, vec3(1,1,1));
-		glEnableVertexAttribArray(0);
-		glBindBuffer(GL_ARRAY_BUFFER, GrndBuffObj);
-		glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 0, 0);
-
-		glEnableVertexAttribArray(1);
-		glBindBuffer(GL_ARRAY_BUFFER, GrndNorBuffObj);
-		glVertexAttribPointer(1, 3, GL_FLOAT, GL_FALSE, 0, 0);
-
-		glEnableVertexAttribArray(2);
-		glBindBuffer(GL_ARRAY_BUFFER, GrndTexBuffObj);
-		glVertexAttribPointer(2, 2, GL_FLOAT, GL_FALSE, 0, 0);
-
-		// draw!
-		glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, GIndxBuffObj);
-		glDrawElements(GL_TRIANGLES, g_GiboLen, GL_UNSIGNED_SHORT, 0);
-
-		glDisableVertexAttribArray(0);
-		glDisableVertexAttribArray(1);
-		glDisableVertexAttribArray(2);
-		curS->unbind();
+	void updateUsingCameraPath(float frametime)  {
+		if (tour) {
+			if(!splinepath[0].isDone()){
+					splinepath[0].update(frametime);
+				eye = splinepath[0].getPosition();
+			} else {
+				splinepath[1].update(frametime);
+				eye = splinepath[1].getPosition();
+			}
+			lookAt = vec3(-17.0f,-6.8,0);
+			forward = normalize(lookAt - eye);
+			right = normalize(cross(forward, up));
+			View = glm::lookAt(eye, eye + forward, up);
+		}
 	}
 	
 	/* helper for animating steve to bend over the flower */
 	void animateSteve(shared_ptr<Program> curS, std::shared_ptr<Shape> shape, float steveBendAngle) {
 		mat4 hipPivot = glm::translate(glm::mat4(1.0f), vec3(0, -0.3, 0));
 		mat4 hipRotation = glm::rotate(glm::mat4(1.0f), radians(steveBendAngle), vec3(0, 0, 1));
-		mat4 hipTranslation = glm::translate(glm::mat4(1.0f), vec3(-1.52, 0, 0));
+		mat4 hipTranslation = glm::translate(glm::mat4(1.0f), vec3(-17.0, -6.8, 0));
 		mat4 hipTransform =  hipTranslation * hipPivot * hipRotation * glm::inverse(hipPivot) * shape->getModelMatrix();
 
 		glUniformMatrix4fv(prog->getUniform("M"), 1, GL_FALSE, value_ptr(hipTransform));
@@ -372,6 +434,10 @@ public:
   		mat4 ctm = Trans*RotX*RotY*ScaleS * normTransform;
   		glUniformMatrix4fv(curS->getUniform("M"), 1, GL_FALSE, value_ptr(ctm));
   	}
+
+	void SetModel(std::shared_ptr<Program> prog, std::shared_ptr<MatrixStack>M) {
+		glUniformMatrix4fv(prog->getUniform("M"), 1, GL_FALSE, value_ptr(M->topMatrix()));
+   	}
 
 	 //helper function to pass material data to the GPU
 	 void setMaterial(shared_ptr<Program> curS, int i) {
@@ -417,17 +483,10 @@ public:
 				glUniform3f(curS->getUniform("MatSpec"), 0.2f, 0.1f, 0.05f);  // Soft brown specular highlight
 				glUniform1f(curS->getUniform("MatShine"), 25.0f);             // Moderate shininess for fur appearance
 				break;
-	
-			case 6: // White Bunny
-				glUniform3f(curS->getUniform("MatAmb"), 0.3f, 0.3f, 0.3f);    // Neutral white ambient
-				glUniform3f(curS->getUniform("MatDif"), 0.9f, 0.9f, 0.9f);    // Bright white diffuse
-				glUniform3f(curS->getUniform("MatSpec"), 0.5f, 0.5f, 0.5f);   // High specular reflection
-				glUniform1f(curS->getUniform("MatShine"), 80.0f);             // Higher shininess for a smooth, shiny appearance
-				break;
 		}
 	}	
 
-	void render() {
+	void render(float frametime) {
 		timeElapsed += 0.02f;
 		// Get current frame buffer size.
 		int width, height;
@@ -442,35 +501,33 @@ public:
 
 		// Create the matrix stacks - please leave these alone for now
 		auto Projection = make_shared<MatrixStack>();
-		auto View = make_shared<MatrixStack>();
 		auto Model = make_shared<MatrixStack>();
-
+		forward = normalize(lookAt);
+    	right = normalize(cross(forward, up));
+		View = glm::lookAt(eye, eye + forward, up);
+		
 		// Apply perspective projection.
 		Projection->pushMatrix();
 		Projection->perspective(45.0f, aspect, 0.01f, 100.0f);
 
-		// View is global translation along negative z for now
-		View->pushMatrix();
-		View->loadIdentity();
-		View->translate(vec3(0, 0, -7));
-		View->rotate(radians(-35.0f), vec3(0, 1, 0));
-		View->rotate(yaw, vec3(0, 1, 0));
+		View = glm::translate(View, vec3(gZ, 0, gX));
+		updateUsingCameraPath(frametime);
 
 		prog->bind();
 		glUniformMatrix4fv(prog->getUniform("P"), 1, GL_FALSE, value_ptr(Projection->topMatrix()));
-		glUniformMatrix4fv(prog->getUniform("V"), 1, GL_FALSE, value_ptr(View->topMatrix()));
-		glUniform3f(prog->getUniform("lightPos"), -2.0 + lightTrans, 2.0, 2.0);
+		glUniformMatrix4fv(prog->getUniform("V"), 1, GL_FALSE, value_ptr(View));
+		glUniform3f(prog->getUniform("lightPos"), -2.0 + lightTrans, 30.0, 2.0);
 
 		// draw flower
 		setMaterial(prog, 1); // purple for flower
-		setModel(prog, meshes[0], vec3(0,-0.5f,0), 0, 0, 0, vec3(0.5,0.5f,0.5));
+		setModel(prog, meshes[0], vec3(-15.8,-7.3f,0), 0, 0, 0, vec3(0.5,0.5f,0.5));
 		meshes[0]->draw(prog);
 		meshes[1]->draw(prog);
 		meshes[2]->draw(prog);
 		
 		// draw bottom half of steve
 		setMaterial(prog, 3); // dark blue for pants
-		setModel(prog, meshes[3], vec3(-1.5f,0,0), 0, 0, 0, vec3(1,1,1));
+		setModel(prog, meshes[3], vec3(-17.0f,-6.8,0), 0, 0, 0, vec3(1,1,1));
 		meshes[3]->draw(prog);
 		meshes[4]->draw(prog);
 
@@ -508,44 +565,69 @@ public:
 			creeperX = creeperStartX;
 		}
 	
-		setModel(prog, meshes[9], vec3(creeperX, 0, 0), 33, 0, 0, vec3(creeperScale, 1, creeperScale));
+		setModel(prog, meshes[9], vec3(creeperX, -6.8f, 0), 33, 0, 0, vec3(creeperScale, 1, creeperScale));
 		meshes[9]->draw(prog);
 
 		// draw bunny
-		setMaterial(prog, bunnyColor);
-		setModel(prog, meshes[11], vec3(2,-0.5f,0), 0, 0, 0, vec3(0.5f,0.5f,0.5f));
+		setMaterial(prog, 5);
+		setModel(prog, meshes[11], vec3(-14.8,-7.3f,0), 0, 0, 0, vec3(0.5f,0.5f,0.5f));
 		meshes[11]->draw(prog);
 
 		// draw first tree
 		setMaterial(prog, 5);
-		setModel(prog, meshes[12], vec3(3,0.5f,-3.5), 0, 0, 0, vec3(2.0f,2.0f,2.0f));
+		setModel(prog, meshes[12], vec3(-15.0,-5.5f,-5.5), 0, 0, 0, vec3(2.5f,2.5f,2.5f));
 		meshes[12]->draw(prog);
 		setMaterial(prog, 0);
 		meshes[13]->draw(prog);
 
 		// draw second tree
 		setMaterial(prog, 5);
-		setModel(prog, meshes[12], vec3(-3,0.5f,-3.5), 0, 0, 0, vec3(2.0f,2.0f,2.0f));
+		setModel(prog, meshes[12], vec3(-25.5,-4.5f,-5.5), 0, 0, 0, vec3(2.5f,2.5f,2.5f));
+		meshes[12]->draw(prog);
+		setMaterial(prog, 0);
+		meshes[13]->draw(prog);
+
+		// draw third tree
+		setMaterial(prog, 5);
+		setModel(prog, meshes[12], vec3(-14.0,-4.5f,-20.5), 0, 0, 0, vec3(2.5f,2.5f,2.5f));
+		meshes[12]->draw(prog);
+		setMaterial(prog, 0);
+		meshes[13]->draw(prog);
+
+		// draw fourth tree
+		setMaterial(prog, 5);
+		setModel(prog, meshes[12], vec3(-16.0,-4.5f,10.5), 0, 0, 0, vec3(2.5f,2.5f,2.5f));
 		meshes[12]->draw(prog);
 		setMaterial(prog, 0);
 		meshes[13]->draw(prog);
 		
 		prog->unbind();
 
-		//switch shaders to the texture mapping shader and draw the ground
+		//switch shaders to the texture mapping shader and draw big background sphere
 		texProg->bind();
 		glUniformMatrix4fv(texProg->getUniform("P"), 1, GL_FALSE, value_ptr(Projection->topMatrix()));
-		glUniformMatrix4fv(texProg->getUniform("V"), 1, GL_FALSE, value_ptr(View->topMatrix()));
+		glUniformMatrix4fv(texProg->getUniform("V"), 1, GL_FALSE, value_ptr(View));
 		glUniformMatrix4fv(texProg->getUniform("M"), 1, GL_FALSE, value_ptr(Model->topMatrix()));
-				
-		drawGround(texProg);
-
+		glUniform3f(texProg->getUniform("lightPos"), -2.0+lightTrans, 30.0, 2.0);
+		glUniform1f(texProg->getUniform("MatShine"), 27.9);
+		glUniform1i(texProg->getUniform("flip"), 0);
+		texture1->bind(texProg->getUniform("Texture0"));
+		setModel(texProg, meshes[14], vec3(0,0,0), 0, 0, 0, vec3(50.0f,50.0f,50.0f));
+		meshes[14]->draw(texProg);
 		texProg->unbind();
+
+		voxelProg->bind();
+		glUniformMatrix4fv(voxelProg->getUniform("P"), 1, GL_FALSE, value_ptr(Projection->topMatrix()));
+		glUniformMatrix4fv(voxelProg->getUniform("V"), 1, GL_FALSE, value_ptr(View));
+		glUniform3f(voxelProg->getUniform("lightPos"), -2.0+lightTrans, 30.0, 2.0);
+		glUniform1f(voxelProg->getUniform("MatShine"), 27.9);
+		glUniform1i(voxelProg->getUniform("flip"), 0);
+		texture0->bind(voxelProg->getUniform("Texture0"));
+		renderChunks();
+		voxelProg->unbind();
 
 		// Pop matrix stacks.
 		Projection->popMatrix();
-		View->popMatrix();
-
 	}
 };
 
@@ -575,12 +657,27 @@ int main(int argc, char *argv[])
 	application->init(resourceDir);
 	application->initGeom(resourceDir);
 
+	auto lastTime = chrono::high_resolution_clock::now();
 	// Loop until the user closes the window.
 	while (! glfwWindowShouldClose(windowManager->getHandle()))
 	{
-		// Render scene.
-		application->render();
+		// save current time for next frame
+		auto nextLastTime = chrono::high_resolution_clock::now();
 
+		// get time since last frame
+		float deltaTime =
+			chrono::duration_cast<std::chrono::microseconds>(
+				chrono::high_resolution_clock::now() - lastTime)
+				.count();
+		// convert microseconds (weird) to seconds (less weird)
+		deltaTime *= 0.000001;
+
+		// reset lastTime so that we can calculate the deltaTime
+		// on the next frame
+		lastTime = nextLastTime;
+
+		// Render scene.
+		application->render(deltaTime);
 		// Swap front and back buffers.
 		glfwSwapBuffers(windowManager->getHandle());
 		// Poll for and process events.

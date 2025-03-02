@@ -2,7 +2,7 @@ cmake_minimum_required(VERSION 3.4)
 include("${CMAKE_SOURCE_DIR}/FindGfxLibs.cmake")
 
 # Name of the project
-project(BaseP2)
+project(P4)
 
 # Enforce use of C++14
 set(CMAKE_CXX_STANDARD_REQUIRED 14)
@@ -25,6 +25,10 @@ add_executable(${CMAKE_PROJECT_NAME} ${SOURCES} ${HEADERS} ${GLSL})
 # Helper function included from FindGfxLibs.cmake
 findGLFW3(${CMAKE_PROJECT_NAME})
 findGLM(${CMAKE_PROJECT_NAME})
+
+# add glew
+find_package(GLEW REQUIRED)
+target_link_libraries(P4 GLEW::GLEW)
 
 # Add GLM
 # Get the GLM environment variable. Since GLM is a header-only library, we

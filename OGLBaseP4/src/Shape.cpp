@@ -117,6 +117,7 @@ void Shape::init()
     // Send the texture array to the GPU - for now no textures
     if (texBuf.empty() || texOff) {
         texBufID = 0;
+        cout << "warning no textures!" << endl;
     } else {
         glGenBuffers(1, &texBufID);
         glBindBuffer(GL_ARRAY_BUFFER, texBufID);
@@ -132,7 +133,7 @@ void Shape::init()
     glBindBuffer(GL_ARRAY_BUFFER, 0);
     glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, 0);
 
-    assert(glGetError() == GL_NO_ERROR);
+    //assert(glGetError() == GL_NO_ERROR);
 }
 
 /* Draw the shape */
