@@ -11,9 +11,10 @@ public:
     ChunkData(int chunkX, int chunkY, int chunkZ);
     glm::vec3 getChunkCoords();
     bool isSolid(int x, int y, int z) const;
+    int getVoxel(int x, int y, int z);
     
 private:
     int chunkX, chunkY, chunkZ;
-    std::vector<std::vector<std::vector<bool>>> voxels;
+    std::vector<std::vector<std::vector<int>>> voxels;
     void generateTerrain(); 
 };

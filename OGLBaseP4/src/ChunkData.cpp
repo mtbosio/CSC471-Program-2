@@ -5,7 +5,7 @@
 #include <iostream>
 
 ChunkData::ChunkData(int x, int y, int z) : chunkX(x), chunkY(y), chunkZ(z) {
-    voxels.resize(CHUNK_SIZE, std::vector<std::vector<bool>>(CHUNK_SIZE, std::vector<bool>(CHUNK_SIZE, false)));
+    voxels.resize(CHUNK_SIZE, std::vector<std::vector<int>>(CHUNK_SIZE, std::vector<int>(CHUNK_SIZE, 0)));
     generateTerrain();
 }
 
@@ -28,12 +28,20 @@ void ChunkData::generateTerrain() {
             int height = (value + 1) * 30 - 30; 
             for (int y = 0; y < CHUNK_SIZE; y++) {
                 int voxelY = chunkY * CHUNK_SIZE + y;
+                if (voxelY == height) {
+                    voxels[x][y][z] = 1; // grass top block
+                }
                 if (voxelY < height) {
-                    voxels[x][y][z] = true;
+                    voxels[x][y][z] = 2; // dirt lower block
                 } 
             }
         }
     }
+}
+
+int ChunkData::getVoxel(int x, int y, int z)
+{
+    return voxels[x][y][z];
 }
 
 bool ChunkData::isSolid(int x, int y, int z) const {
@@ -44,5 +52,5 @@ bool ChunkData::isSolid(int x, int y, int z) const {
         return false;
     }
 
-    return voxels[x][y][z];
+    return voxels[x][y][z] > 0;
 }

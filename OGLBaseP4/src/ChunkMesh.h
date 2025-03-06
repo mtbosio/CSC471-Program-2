@@ -17,5 +17,6 @@ private:
     std::vector<Vertex> vertices;
     std::vector<unsigned int> indices;
 
-    void addFace(int x, int y, int z, int face);
+    void addFace(int x, int y, int z, int face, int blockType);
+    glm::vec2 getColumnRowForBlockType(int blockType, int normal);
 };

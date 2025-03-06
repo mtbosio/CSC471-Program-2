@@ -61,10 +61,12 @@ public:
 	// shader program for terrain
 	std::shared_ptr<Program> voxelProg;
 
+	// shader program for skybox
+	std::shared_ptr<Program> skyboxProg;
+
 	// images
-	shared_ptr<Texture> texture0;
-	shared_ptr<Texture> texture1;
-	shared_ptr<Texture> texture2; // block texture
+	shared_ptr<Texture> texture0; // texture atlas
+	shared_ptr<Texture> skyboxTexture; // skybox texture
 
 	std::vector<std::shared_ptr<Shape>> meshes;
 
@@ -237,24 +239,46 @@ public:
 		//read in a load the textures
 		// grass texture
 		texture0 = make_shared<Texture>();
-  		texture0->setFilename(resourceDirectory + "/minecraft_grass.jpg");
+  		texture0->setFilename(resourceDirectory + "/texture_atlas.jpg");
   		texture0->init();
   		texture0->setUnit(0);
-  		texture0->setWrapModes(GL_REPEAT, GL_REPEAT);
-
-		// sky texture
-		texture1 = make_shared<Texture>();
-		texture1->setFilename(resourceDirectory + "/cartoonSky.png");
-		texture1->init();
-		texture1->setUnit(1);
-		texture1->setWrapModes(GL_REPEAT, GL_REPEAT);
+  		texture0->setWrapModes(GL_CLAMP_TO_EDGE, GL_CLAMP_TO_EDGE);
+		// change filtering to nearest
+		glBindTexture(GL_TEXTURE_2D, texture0->getID());
+		glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+		glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+		glBindTexture(GL_TEXTURE_2D, 0);
 
 		splinepath[0] = Spline(glm::vec3(-24,5,10), glm::vec3(-22,0,10), glm::vec3(-22,-5, 0), 5);
         splinepath[1] = Spline(glm::vec3(-22,-5, 0), glm::vec3(-22,-5, 0), glm::vec3(-24,-5, -10), 5);
+
+		skyboxProg = make_shared<Program>();
+		skyboxProg->setVerbose(true);
+		skyboxProg->setShaderNames(resourceDirectory + "/skybox_vert.glsl", resourceDirectory + "/skybox_frag.glsl");
+		skyboxProg->init();
+		skyboxProg->addUniform("P");
+		skyboxProg->addUniform("V");
+		skyboxProg->addUniform("M");
+		skyboxProg->addUniform("skybox");
+		skyboxProg->addAttribute("vertPos");
+		skyboxProg->addAttribute("vertNor");
+		
+		// Load cubemap
+		vector<string> cubemapFaces = {
+			resourceDirectory + "/skybox/Daylight Box_Right.bmp",
+			resourceDirectory + "/skybox/Daylight Box_Left.bmp",
+			resourceDirectory + "/skybox/Daylight Box_Top.bmp",
+			resourceDirectory + "/skybox/Daylight Box_Bottom.bmp",
+			resourceDirectory + "/skybox/Daylight Box_Front.bmp",
+			resourceDirectory + "/skybox/Daylight Box_Back.bmp"
+		};
+		skyboxTexture = make_shared<Texture>();
+		skyboxTexture->loadCubeMap(cubemapFaces);
+		skyboxTexture->setUnit(0);
 	}
 
 	void initGeom(const std::string& resourceDirectory) {
-		std::vector<std::string> objFiles = {"cartoon_flower.obj", "steve.obj", "creeper.obj", "cube.obj", "bunnyNoNorm.obj", "minecraft_tree.obj", "sphereWTex.obj"};
+		std::vector<std::string> objFiles = {"cartoon_flower.obj", "steve.obj", "creeper.obj", "cube.obj", "minecraft_tree.obj"};
 	
 		int count = 0;
 		for (const auto& file : objFiles) {
@@ -336,22 +360,29 @@ public:
 		// creeper 9
 		normalizeMesh(meshes[9], meshes[9]->min, meshes[9]->max);
 
-		// floor 10
+		// cube 10
 		normalizeMesh(meshes[10], meshes[10]->min, meshes[10]->max);
 
-		// bunny 11
+		// tree 11 - 12
 		normalizeMesh(meshes[11], meshes[11]->min, meshes[11]->max);
-
-		// tree 12 - 13
 		normalizeMesh(meshes[12], meshes[12]->min, meshes[12]->max);
-		normalizeMesh(meshes[13], meshes[13]->min, meshes[13]->max);
-
-		// sphere 14
-		normalizeMesh(meshes[14], meshes[14]->min, meshes[14]->max);
 
 		initChunks();
 
 		std::cout << "Total shapes loaded: " << count << std::endl;
+	}
+
+	void initChunks() {
+		for (int x = -GRID_SIZE; x < GRID_SIZE; x++) {
+			for (int y = -GRID_SIZE; y < GRID_SIZE; y++) {
+				for (int z = -GRID_SIZE; z < GRID_SIZE; z++) {
+					vec3 pos = vec3(x, y, z);
+					chunks[pos] = new ChunkData(x, y, z); // Store chunk data
+					chunkMeshes[pos] = new ChunkMesh(*chunks[pos]); // Store chunk mesh
+					chunkMeshes[pos]->generateMesh(); // Generate mesh
+				}
+			}
+		}
 	}
 
 	void normalizeMesh(std::shared_ptr<Shape>& shape, const glm::vec3& globalMin, const glm::vec3& globalMax) {
@@ -368,19 +399,6 @@ public:
 		shape->setScale(vec3(scale_factor));
 
 	}
-
-	void initChunks() {
-		for (int x = -GRID_SIZE; x < GRID_SIZE; x++) {
-			for (int y = -GRID_SIZE; y < GRID_SIZE; y++) {
-				for (int z = -GRID_SIZE; z < GRID_SIZE; z++) {
-					vec3 pos = vec3(x, y, z);
-					chunks[pos] = new ChunkData(x, y, z); // Store chunk data
-					chunkMeshes[pos] = new ChunkMesh(*chunks[pos]); // Store chunk mesh
-					chunkMeshes[pos]->generateMesh(); // Generate mesh
-				}
-			}
-		}
-	}
 	
 	// Render the chunks
 	void renderChunks() {
@@ -393,6 +411,7 @@ public:
 			mesh->render();
 		}
 	}
+
 
 	void updateUsingCameraPath(float frametime)  {
 		if (tour) {
@@ -568,54 +587,37 @@ public:
 		setModel(prog, meshes[9], vec3(creeperX, -6.8f, 0), 33, 0, 0, vec3(creeperScale, 1, creeperScale));
 		meshes[9]->draw(prog);
 
-		// draw bunny
-		setMaterial(prog, 5);
-		setModel(prog, meshes[11], vec3(-14.8,-7.3f,0), 0, 0, 0, vec3(0.5f,0.5f,0.5f));
-		meshes[11]->draw(prog);
-
 		// draw first tree
 		setMaterial(prog, 5);
-		setModel(prog, meshes[12], vec3(-15.0,-5.5f,-5.5), 0, 0, 0, vec3(2.5f,2.5f,2.5f));
-		meshes[12]->draw(prog);
+		setModel(prog, meshes[11], vec3(-15.0,-5.5f,-5.5), 0, 0, 0, vec3(2.5f,2.5f,2.5f));
+		meshes[11]->draw(prog);
 		setMaterial(prog, 0);
-		meshes[13]->draw(prog);
+		meshes[12]->draw(prog);
 
 		// draw second tree
 		setMaterial(prog, 5);
-		setModel(prog, meshes[12], vec3(-25.5,-4.5f,-5.5), 0, 0, 0, vec3(2.5f,2.5f,2.5f));
-		meshes[12]->draw(prog);
+		setModel(prog, meshes[11], vec3(-25.5,-4.5f,-5.5), 0, 0, 0, vec3(2.5f,2.5f,2.5f));
+		meshes[11]->draw(prog);
 		setMaterial(prog, 0);
-		meshes[13]->draw(prog);
+		meshes[12]->draw(prog);
 
 		// draw third tree
 		setMaterial(prog, 5);
-		setModel(prog, meshes[12], vec3(-14.0,-4.5f,-20.5), 0, 0, 0, vec3(2.5f,2.5f,2.5f));
-		meshes[12]->draw(prog);
+		setModel(prog, meshes[11], vec3(-14.0,-4.5f,-20.5), 0, 0, 0, vec3(2.5f,2.5f,2.5f));
+		meshes[11]->draw(prog);
 		setMaterial(prog, 0);
-		meshes[13]->draw(prog);
+		meshes[12]->draw(prog);
 
 		// draw fourth tree
 		setMaterial(prog, 5);
-		setModel(prog, meshes[12], vec3(-16.0,-4.5f,10.5), 0, 0, 0, vec3(2.5f,2.5f,2.5f));
-		meshes[12]->draw(prog);
+		setModel(prog, meshes[11], vec3(-16.0,-4.5f,10.5), 0, 0, 0, vec3(2.5f,2.5f,2.5f));
+		meshes[11]->draw(prog);
 		setMaterial(prog, 0);
-		meshes[13]->draw(prog);
+		meshes[12]->draw(prog);
 		
 		prog->unbind();
 
-		//switch shaders to the texture mapping shader and draw big background sphere
-		texProg->bind();
-		glUniformMatrix4fv(texProg->getUniform("P"), 1, GL_FALSE, value_ptr(Projection->topMatrix()));
-		glUniformMatrix4fv(texProg->getUniform("V"), 1, GL_FALSE, value_ptr(View));
-		glUniformMatrix4fv(texProg->getUniform("M"), 1, GL_FALSE, value_ptr(Model->topMatrix()));
-		glUniform3f(texProg->getUniform("lightPos"), -2.0+lightTrans, 30.0, 2.0);
-		glUniform1f(texProg->getUniform("MatShine"), 27.9);
-		glUniform1i(texProg->getUniform("flip"), 0);
-		texture1->bind(texProg->getUniform("Texture0"));
-		setModel(texProg, meshes[14], vec3(0,0,0), 0, 0, 0, vec3(50.0f,50.0f,50.0f));
-		meshes[14]->draw(texProg);
-		texProg->unbind();
-
+		// draw chunks
 		voxelProg->bind();
 		glUniformMatrix4fv(voxelProg->getUniform("P"), 1, GL_FALSE, value_ptr(Projection->topMatrix()));
 		glUniformMatrix4fv(voxelProg->getUniform("V"), 1, GL_FALSE, value_ptr(View));
@@ -625,6 +627,25 @@ public:
 		texture0->bind(voxelProg->getUniform("Texture0"));
 		renderChunks();
 		voxelProg->unbind();
+		
+		// draw skybox
+		glDepthMask(GL_FALSE);
+		glDepthFunc(GL_LEQUAL);
+
+		skyboxProg->bind();
+		// Remove translation from the view matrix
+		mat4 view = mat4(mat3(View)); 
+		glUniformMatrix4fv(skyboxProg->getUniform("P"), 1, GL_FALSE, value_ptr(Projection->topMatrix()));
+		glUniformMatrix4fv(skyboxProg->getUniform("V"), 1, GL_FALSE, value_ptr(view));
+
+		setModel(skyboxProg, meshes[10], vec3(0), 0, 0, 0, vec3(100.0f)); // Scale up
+		meshes[10]->draw(skyboxProg);
+
+		skyboxProg->unbind();
+
+		// Restore depth settings
+		glDepthMask(GL_TRUE);
+		glDepthFunc(GL_LESS);
 
 		// Pop matrix stacks.
 		Projection->popMatrix();

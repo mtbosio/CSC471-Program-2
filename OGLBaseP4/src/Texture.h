@@ -18,13 +18,14 @@ public:
 	void unbind();
 	void setWrapModes(GLint wrapS, GLint wrapT); // Must be called after init()
 	GLint getID() const { return tid;}
+	void loadCubeMap(const std::vector<std::string>& faces);
 private:
 	std::string filename;
 	int width;
 	int height;
 	GLuint tid;
 	GLint unit;
-	
+	void flipImageVertically(unsigned char* image, int width, int height, int channels);
 };
 
 #endif

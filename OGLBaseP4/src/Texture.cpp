@@ -44,7 +44,7 @@ void Texture::init()
 	glBindTexture(GL_TEXTURE_2D, tid);
 	// Load the actual texture data
 	// Base level is 0, number of channels is 3, and border is 0.
-  glTexImage2D(GL_TEXTURE_2D, 0, GL_RGB, width, height, 0, GL_RGB, GL_UNSIGNED_BYTE, data);
+  	glTexImage2D(GL_TEXTURE_2D, 0, GL_RGB, width, height, 0, GL_RGB, GL_UNSIGNED_BYTE, data);
 	// Generate image pyramid
 	glGenerateMipmap(GL_TEXTURE_2D);
 	// Set texture wrap modes for the S and T directions
@@ -78,4 +78,44 @@ void Texture::unbind()
 {
 	glActiveTexture(GL_TEXTURE0 + unit);
 	glBindTexture(GL_TEXTURE_2D, 0);
+}
+
+void Texture::loadCubeMap(const std::vector<std::string>& faces) {
+	glGenTextures(1, &tid);
+	glBindTexture(GL_TEXTURE_CUBE_MAP, tid);
+
+	int width, height, nrChannels;
+	
+	for (unsigned int i = 0; i < faces.size(); i++) {
+		unsigned char* data = stbi_load(faces[i].c_str(), &width, &height, &nrChannels, 0);
+		if (data) {
+			flipImageVertically(data, width, height, nrChannels); // Flip the texture
+			glTexImage2D(GL_TEXTURE_CUBE_MAP_POSITIVE_X + i, 0, GL_RGB, width, height, 0, GL_RGB, GL_UNSIGNED_BYTE, data);
+			stbi_image_free(data);
+		} else {
+			std::cerr << "Failed to load cubemap texture: " << faces[i] << std::endl;
+			stbi_image_free(data);
+		}
+	}
+
+	glTexParameteri(GL_TEXTURE_CUBE_MAP, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+	glTexParameteri(GL_TEXTURE_CUBE_MAP, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+	glTexParameteri(GL_TEXTURE_CUBE_MAP, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+	glTexParameteri(GL_TEXTURE_CUBE_MAP, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+	glTexParameteri(GL_TEXTURE_CUBE_MAP, GL_TEXTURE_WRAP_R, GL_CLAMP_TO_EDGE);
+}
+
+void Texture::flipImageVertically(unsigned char* image, int width, int height, int channels) {
+    int rowSize = width * channels;  
+    unsigned char* tempRow = new unsigned char[rowSize];  
+
+    for (int i = 0; i < height / 2; i++) {
+        unsigned char* row1 = image + i * rowSize;
+        unsigned char* row2 = image + (height - i - 1) * rowSize;
+        memcpy(tempRow, row1, rowSize);
+        memcpy(row1, row2, rowSize);
+        memcpy(row2, tempRow, rowSize);
+    }
+
+    delete[] tempRow;
 }
