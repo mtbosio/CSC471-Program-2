@@ -65,6 +65,8 @@
     "system_error": "cpp",
     "type_traits": "cpp",
     "utility": "cpp",
-    "format": "cpp"
-  }
+    "format": "cpp",
+    "unordered_set": "cpp"
+  },
+  "C_Cpp.errorSquiggles": "disabled"
 }

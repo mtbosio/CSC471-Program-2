@@ -13,6 +13,7 @@
 #include "Shape.h"
 #include "MatrixStack.h"
 #include "WindowManager.h"
+#include "World.h"
 #include "Texture.h"
 
 #define TINYOBJLOADER_IMPLEMENTATION
@@ -31,20 +32,6 @@
 
 using namespace std;
 using namespace glm;
-
-// Hash function for glm::vec3
-struct Vec3Hash {
-	size_t operator()(const vec3& v) const {
-		return hash<float>()(v.x) ^ (hash<float>()(v.y) << 1) ^ (hash<float>()(v.z) << 2);
-	}
-};
-
-// Equality function for unordered_map
-struct Vec3Equal {
-	bool operator()(const vec3& v1, const vec3& v2) const {
-		return v1.x == v2.x && v1.y == v2.y && v1.z == v2.z;
-	}
-};
 
 class Application : public EventCallbacks {
 
@@ -75,7 +62,7 @@ public:
 
 	// camera movement
 	int radius = 1;
-	vec3 eye = vec3(0,5,10);
+	vec3 eye = vec3(0,0,0);
 	vec3 lookAt = vec3(0,0,-1);
 	mat4 View;
 	vec3 up = vec3(0,1,0);
@@ -106,8 +93,8 @@ public:
 	static const int GRID_SIZE = 3; 
 
 	// Store chunks
-	unordered_map<vec3, ChunkData*, Vec3Hash, Vec3Equal> chunks;
-	unordered_map<vec3, ChunkMesh*, Vec3Hash, Vec3Equal> chunkMeshes;
+	World world;
+	unordered_map<ChunkCoord, ChunkMesh*> chunkMeshes;
 
 	void keyCallback(GLFWwindow *window, int key, int scancode, int action, int mods)
 	{
@@ -275,10 +262,12 @@ public:
 		skyboxTexture = make_shared<Texture>();
 		skyboxTexture->loadCubeMap(cubemapFaces);
 		skyboxTexture->setUnit(0);
+
+
 	}
 
 	void initGeom(const std::string& resourceDirectory) {
-		std::vector<std::string> objFiles = {"cartoon_flower.obj", "steve.obj", "creeper.obj", "cube.obj", "minecraft_tree.obj"};
+		std::vector<std::string> objFiles = {"cartoon_flower.obj", "steve.obj", "creeper.obj", "cube.obj"};
 	
 		int count = 0;
 		for (const auto& file : objFiles) {
@@ -363,24 +352,43 @@ public:
 		// cube 10
 		normalizeMesh(meshes[10], meshes[10]->min, meshes[10]->max);
 
-		// tree 11 - 12
-		normalizeMesh(meshes[11], meshes[11]->min, meshes[11]->max);
-		normalizeMesh(meshes[12], meshes[12]->min, meshes[12]->max);
+		initChunkData();
+		generateTrees();
+		initChunkMeshes();
 
-		initChunks();
+		// set camera and steve at correct position
+		ChunkCoord origin = {0,0};
+		ChunkData* chunk = world.getChunk(origin);
+		eye = vec3(chunk->origin.x, chunk->origin.y + 10, chunk->origin.x);
+		//lookAt = chunk->origin;
 
 		std::cout << "Total shapes loaded: " << count << std::endl;
 	}
 
-	void initChunks() {
+	void initChunkData() {
 		for (int x = -GRID_SIZE; x < GRID_SIZE; x++) {
-			for (int y = -GRID_SIZE; y < GRID_SIZE; y++) {
-				for (int z = -GRID_SIZE; z < GRID_SIZE; z++) {
-					vec3 pos = vec3(x, y, z);
-					chunks[pos] = new ChunkData(x, y, z); // Store chunk data
-					chunkMeshes[pos] = new ChunkMesh(*chunks[pos]); // Store chunk mesh
-					chunkMeshes[pos]->generateMesh(); // Generate mesh
-				}
+			for (int z = -GRID_SIZE; z < GRID_SIZE; z++) {
+				ChunkCoord pos = {x, z};
+				world.addChunk(pos); // Store chunk data
+			}
+		}
+	}
+
+	void generateTrees(){
+		for (int x = -GRID_SIZE; x < GRID_SIZE; x++) {
+			for (int z = -GRID_SIZE; z < GRID_SIZE; z++) {
+				ChunkCoord pos = {x, z};
+				world.getChunk(pos)->generateTrees();
+			}
+		}
+	}
+
+	void initChunkMeshes(){
+		for (int x = -GRID_SIZE; x < GRID_SIZE; x++) {
+			for (int z = -GRID_SIZE; z < GRID_SIZE; z++) {
+				ChunkCoord pos = {x, z};
+				chunkMeshes[pos] = new ChunkMesh(*world.getChunk(pos)); // Store chunk mesh
+				chunkMeshes[pos]->generateMesh(); // Generate mesh
 			}
 		}
 	}
@@ -403,9 +411,9 @@ public:
 	// Render the chunks
 	void renderChunks() {
 		for (const auto& pair : chunkMeshes) {
-			vec3 chunkCoords = pair.first;
+			ChunkCoord chunkCoords = pair.first;
 			ChunkMesh* mesh = pair.second;
-			mat4 Model = glm::translate(mat4(1.0f), mesh->chunkData.getChunkCoords()); // Offset by chunk size
+			mat4 Model = glm::translate(mat4(1.0f), vec3(mesh->chunkData.getChunkCoords().x, 0, mesh->chunkData.getChunkCoords().y)); // Offset by chunk size
 			glUniformMatrix4fv(voxelProg->getUniform("M"), 1, GL_FALSE, value_ptr(Model));
 	
 			mesh->render();
@@ -535,7 +543,7 @@ public:
 		prog->bind();
 		glUniformMatrix4fv(prog->getUniform("P"), 1, GL_FALSE, value_ptr(Projection->topMatrix()));
 		glUniformMatrix4fv(prog->getUniform("V"), 1, GL_FALSE, value_ptr(View));
-		glUniform3f(prog->getUniform("lightPos"), -2.0 + lightTrans, 30.0, 2.0);
+		glUniform3f(prog->getUniform("lightPos"), -2.0 + lightTrans, 60.0, 2.0);
 
 		// draw flower
 		setMaterial(prog, 1); // purple for flower
@@ -586,34 +594,6 @@ public:
 	
 		setModel(prog, meshes[9], vec3(creeperX, -6.8f, 0), 33, 0, 0, vec3(creeperScale, 1, creeperScale));
 		meshes[9]->draw(prog);
-
-		// draw first tree
-		setMaterial(prog, 5);
-		setModel(prog, meshes[11], vec3(-15.0,-5.5f,-5.5), 0, 0, 0, vec3(2.5f,2.5f,2.5f));
-		meshes[11]->draw(prog);
-		setMaterial(prog, 0);
-		meshes[12]->draw(prog);
-
-		// draw second tree
-		setMaterial(prog, 5);
-		setModel(prog, meshes[11], vec3(-25.5,-4.5f,-5.5), 0, 0, 0, vec3(2.5f,2.5f,2.5f));
-		meshes[11]->draw(prog);
-		setMaterial(prog, 0);
-		meshes[12]->draw(prog);
-
-		// draw third tree
-		setMaterial(prog, 5);
-		setModel(prog, meshes[11], vec3(-14.0,-4.5f,-20.5), 0, 0, 0, vec3(2.5f,2.5f,2.5f));
-		meshes[11]->draw(prog);
-		setMaterial(prog, 0);
-		meshes[12]->draw(prog);
-
-		// draw fourth tree
-		setMaterial(prog, 5);
-		setModel(prog, meshes[11], vec3(-16.0,-4.5f,10.5), 0, 0, 0, vec3(2.5f,2.5f,2.5f));
-		meshes[11]->draw(prog);
-		setMaterial(prog, 0);
-		meshes[12]->draw(prog);
 		
 		prog->unbind();
 
@@ -621,7 +601,7 @@ public:
 		voxelProg->bind();
 		glUniformMatrix4fv(voxelProg->getUniform("P"), 1, GL_FALSE, value_ptr(Projection->topMatrix()));
 		glUniformMatrix4fv(voxelProg->getUniform("V"), 1, GL_FALSE, value_ptr(View));
-		glUniform3f(voxelProg->getUniform("lightPos"), -2.0+lightTrans, 30.0, 2.0);
+		glUniform3f(voxelProg->getUniform("lightPos"), -2.0+lightTrans, 60.0, 2.0);
 		glUniform1f(voxelProg->getUniform("MatShine"), 27.9);
 		glUniform1i(voxelProg->getUniform("flip"), 0);
 		texture0->bind(voxelProg->getUniform("Texture0"));
@@ -631,7 +611,7 @@ public:
 		// draw skybox
 		glDepthMask(GL_FALSE);
 		glDepthFunc(GL_LEQUAL);
-
+		glDisable(GL_CULL_FACE);
 		skyboxProg->bind();
 		// Remove translation from the view matrix
 		mat4 view = mat4(mat3(View)); 
@@ -644,6 +624,7 @@ public:
 		skyboxProg->unbind();
 
 		// Restore depth settings
+		glEnable(GL_CULL_FACE);
 		glDepthMask(GL_TRUE);
 		glDepthFunc(GL_LESS);
 

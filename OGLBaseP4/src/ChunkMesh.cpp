@@ -1,8 +1,7 @@
 #include "ChunkMesh.h"
 #include <glad/glad.h>
 
-ChunkMesh::ChunkMesh(ChunkData& chunkData) : chunkData(chunkData){
-    generateMesh();
+ChunkMesh::ChunkMesh(ChunkData& chunkData) : chunkData(chunkData) {
 }
 
 ChunkMesh::~ChunkMesh() {
@@ -14,9 +13,9 @@ ChunkMesh::~ChunkMesh() {
 void ChunkMesh::generateMesh() {
     // go through voxels and add faces for visible blocks
     for (int x = 0; x < CHUNK_SIZE; x++) {
-        for (int y = 0; y < CHUNK_SIZE; y++) {
+        for (int y = 0; y < CHUNK_HEIGHT; y++) {
             for (int z = 0; z < CHUNK_SIZE; z++) {
-                int blockType = chunkData.getVoxel(x,y,z);
+                int blockType = chunkData.getBlock(x,y,z);
                 if(chunkData.isSolid(x,y,z)){
                     if (!chunkData.isSolid(x + 1, y, z)) addFace(x, y, z, 0, blockType); // Right
                     if (!chunkData.isSolid(x - 1, y, z)) addFace(x, y, z, 1, blockType); // Left
@@ -35,9 +34,9 @@ void ChunkMesh::generateMesh() {
     glGenBuffers(1, &VBO);
     glGenBuffers(1, &EBO);
 
-    /*glEnable(GL_CULL_FACE);    // Enable face culling
+    glEnable(GL_CULL_FACE);    // Enable face culling
     glCullFace(GL_BACK);       // Cull back faces
-    glFrontFace(GL_CCW);*/ 
+    glFrontFace(GL_CCW);
 
     glBindVertexArray(VAO);
     
@@ -137,23 +136,29 @@ void ChunkMesh::addFace(int x, int y, int z, int faceIndex, int blockType) {
     }
 }
 
+glm::vec2 ChunkMesh::getColumnRowForBlockType(int blockType, int normal) {
+    switch (blockType) {
+        case 1: // Grass
+            switch (normal) {
+                case 2: return glm::vec2(8, 13); // Top
+                case 3: return glm::vec2(2, 15); // Bottom
+                default: return glm::vec2(3, 15); // Sides
+            }
 
-glm::vec2 ChunkMesh::getColumnRowForBlockType(int blockType, int normal){
-    if(blockType == 1){
-        if(normal == 2){ // top
-            return glm::vec2(8, 13);
-        } else if (normal == 3) // bottom
-        {
+        case 2: // Dirt
             return glm::vec2(2, 15);
-        } else {
-            return glm::vec2(3, 15); // sides
-        }
-        
-    } else if (blockType == 2)
-    {
-        return glm::vec2(2, 15);
-    } else {
-        return glm::vec2(0,0);
+
+        case 3: // Tree trunk
+            switch (normal) {
+                case 2:
+                case 3: return glm::vec2(5, 14); // Top or Bottom
+                default: return glm::vec2(4, 14); // Sides
+            }
+
+        case 4: // Leaves
+            return glm::vec2(4, 7);
+
+        default:
+            return glm::vec2(0, 0);
     }
-    
 }
