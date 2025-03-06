@@ -11,7 +11,7 @@ const int CHUNK_HEIGHT = 256;
 
 class ChunkData {
 public:
-    ChunkData(int chunkX, int chunkZ, World* world);
+    ChunkData(int chunkX, int chunkZ, World* world, int seed);
     glm::vec2 getChunkCoords();
     bool isSolid(int x, int y, int z) const;
     void setBlock(int x, int y, int z, int block);
@@ -20,6 +20,7 @@ public:
     glm::vec3 origin;
     
 private:
+    int seed;
     World* world;
     int chunkX, chunkZ;
     std::vector<std::vector<std::vector<int>>> voxels;

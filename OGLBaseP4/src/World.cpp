@@ -3,7 +3,7 @@
 #include <iostream>
 
 std::unordered_map<ChunkCoord, ChunkData> World::chunks;
-
+int World::seed = 0;
 // Convert world position to chunk coordinates
 ChunkCoord World::worldToChunk(int worldX, int worldZ) {
     return {
@@ -28,6 +28,10 @@ int World::getBlock(int x, int y, int z) {
     if(chunk != nullptr)
     {return chunk->getBlock(localX, y, localZ);}
     return 0;
+}
+
+int World::getBlock(glm::vec3 pos) {
+    return getBlock(pos.x, pos.y, pos.z);
 }
 
 void World::setBlock(int x, int y, int z, int blockType) {
@@ -60,6 +64,6 @@ void World::addChunk(const ChunkCoord& coord) {
     // Check if the chunk already exists
     if(chunks.find(coord) == chunks.end()) {
         // Add the chunk with appropriate initialization
-        chunks.emplace(coord, ChunkData(coord.x, coord.z, this));
+        chunks.emplace(coord, ChunkData(coord.x, coord.z, this, World::seed));
     }
 }

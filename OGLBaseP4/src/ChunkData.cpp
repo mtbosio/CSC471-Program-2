@@ -6,7 +6,7 @@
 #include "ChunkData.h"
 #include "World.h"
 
-ChunkData::ChunkData(int x, int z, World* world) : chunkX(x), chunkZ(z), world(world) {
+ChunkData::ChunkData(int x, int z, World* world, int seed) : chunkX(x), chunkZ(z), world(world), seed(seed) {
     voxels.resize(CHUNK_SIZE, std::vector<std::vector<int>>(CHUNK_HEIGHT, std::vector<int>(CHUNK_SIZE, 0)));
     generateTerrain();
 }
@@ -21,7 +21,7 @@ void ChunkData::generateTerrain() {
     noise.SetNoiseType(FastNoiseLite::NoiseType_Perlin);
     noise.SetFractalType(FastNoiseLite::FractalType_FBm);
     noise.SetFractalOctaves(3);
-    noise.SetSeed(12345);
+    noise.SetSeed(seed);
     for (int x = 0; x < CHUNK_SIZE; x++) {
         for (int z = 0; z < CHUNK_SIZE; z++) {
             float worldX = (chunkX * CHUNK_SIZE + x);
@@ -49,7 +49,7 @@ void ChunkData::generateTrees() {
     noise.SetNoiseType(FastNoiseLite::NoiseType_Perlin);
     noise.SetFractalType(FastNoiseLite::FractalType_FBm);
     noise.SetFractalOctaves(3);
-    noise.SetSeed(12345);
+    noise.SetSeed(seed);
     
     for (int x = 0; x < CHUNK_SIZE; x++) {
         for (int z = 0; z < CHUNK_SIZE; z++) {

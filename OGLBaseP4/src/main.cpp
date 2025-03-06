@@ -57,7 +57,7 @@ public:
 
 	std::vector<std::shared_ptr<Shape>> meshes;
 
-	double theta = -M_PI / 2;
+	double theta = - M_PI / 2;
 	double phi = 0.0;
 
 	// camera movement
@@ -70,21 +70,15 @@ public:
     vec3 right = normalize(cross(forward, up));
 	float gX = 0;
 	float gZ = 0;
-	float speed = 1.5f;
+	float speed = 20.0f;
+	std::unordered_map<int, bool> pressedKeys;
+
 	// tour variables
 	Spline splinepath[2];
 	bool tour = false;
 
-	// variables for creeper walking and explosion
-	float timeElapsed = 0.0f;
-	float creeperStartX = -20.0f;
-	float creeperEndX = -18.1f;
-	float creeperScale = 1.0f;
-	bool exploding = false;
-	float walkDuration = 4.0f;
-    float explodeDuration = 0.7f;
-	float delayDuration = 1.0f; 
-    float creeperX = creeperStartX;
+	// Steve position
+	vec3 stevePosition = vec3(0,0,0);
 
 	// light data
 	float lightTrans = 0;
@@ -92,7 +86,8 @@ public:
 	// randomly generated terrain data
 	static const int GRID_SIZE = 3; 
 
-	// Store chunks
+	// world gen
+	int seed;
 	World world;
 	unordered_map<ChunkCoord, ChunkMesh*> chunkMeshes;
 
@@ -102,19 +97,30 @@ public:
 		{
 			glfwSetWindowShouldClose(window, GL_TRUE);
 		}
-		// movement
-		if (key == GLFW_KEY_W && action == GLFW_REPEAT) {
-			eye += forward * speed;
+		
+		// Track key states (true if pressed, false if released)
+		if (action == GLFW_PRESS) {
+			pressedKeys[key] = true;
+		} else if (action == GLFW_RELEASE) {
+			pressedKeys[key] = false;
 		}
-		if (key == GLFW_KEY_A && action == GLFW_REPEAT) {
-			eye -= right * speed;
+
+		// steve movment
+		if (key == GLFW_KEY_RIGHT && action == GLFW_PRESS){
+			moveSteve(0);
 		}
-		if (key == GLFW_KEY_S && action == GLFW_REPEAT){
-			eye -= forward * speed;
+		if (key == GLFW_KEY_LEFT && action == GLFW_PRESS){
+			moveSteve(1);
 		}
-		if (key == GLFW_KEY_D && action == GLFW_REPEAT){
-			eye += right * speed;
+		if (key == GLFW_KEY_UP && action == GLFW_PRESS){
+			moveSteve(2);
 		}
+		if (key == GLFW_KEY_DOWN && action == GLFW_PRESS){
+			moveSteve(3);
+		}
+		
+
+		// tour
 		if (key == GLFW_KEY_G && action == GLFW_PRESS){
 			tour = !tour;
 		}
@@ -137,10 +143,9 @@ public:
 		int width, height;
 
 		glfwGetFramebufferSize(window, &width, &height);
-		//code for pitch and yaw variablge updates
 
-		theta -= (deltaX / width) * M_PI * 2;
-		phi += (deltaY / height) * M_PI * 2;
+		theta -= (deltaX / width) * M_PI * 4;
+		phi += (deltaY / height) * M_PI * 4;
 		phi = clamp(phi, -80.0 * M_PI / 180, 80 * M_PI / 180);
 		double x = radius*cos(phi)*cos(theta);
 		double y = radius*sin(phi);
@@ -163,6 +168,23 @@ public:
 	void resizeCallback(GLFWwindow *window, int width, int height)
 	{
 		glViewport(0, 0, width, height);
+	}
+
+	void updateMovement(float deltaTime) {
+		float moveSpeed = speed * deltaTime; // Scale speed by frame time
+	
+		if (pressedKeys[GLFW_KEY_W]) {
+			eye += forward * moveSpeed;
+		}
+		if (pressedKeys[GLFW_KEY_A]) {
+			eye -= right * moveSpeed;
+		}
+		if (pressedKeys[GLFW_KEY_S]) {
+			eye -= forward * moveSpeed;
+		}
+		if (pressedKeys[GLFW_KEY_D]) {
+			eye += right * moveSpeed;
+		}
 	}
 
 	void init(const std::string& resourceDirectory)
@@ -357,12 +379,18 @@ public:
 		initChunkMeshes();
 
 		// set camera and steve at correct position
-		ChunkCoord origin = {0,0};
-		ChunkData* chunk = world.getChunk(origin);
-		eye = vec3(chunk->origin.x, chunk->origin.y + 10, chunk->origin.x);
-		//lookAt = chunk->origin;
+		initCameraAndSteve();
 
 		std::cout << "Total shapes loaded: " << count << std::endl;
+	}
+
+	void initCameraAndSteve(){
+		ChunkCoord origin = {0,0};
+		ChunkData* chunk = world.getChunk(origin);
+		eye = vec3(chunk->origin) + vec3(0, 15, 20);
+		//lookAt = vec3(0,-1,0);
+		//theta = 
+		stevePosition = chunk->origin + vec3(0.5,2,0.5);
 	}
 
 	void initChunkData() {
@@ -420,6 +448,87 @@ public:
 		}
 	}
 
+	void moveSteve(int direction){
+		int block1 = 0;
+		int block2 = 0;
+		int block3 = 0;
+		switch (direction){
+			case 0: // right
+				block1 = world.getBlock(stevePosition - vec3(0.5,2,0.5) + vec3(1,1,0)); // block to right
+				block2 = world.getBlock(stevePosition - vec3(0.5,2,0.5) + vec3(1,2,0)); // block above that one
+				block3 = world.getBlock(stevePosition - vec3(0.5,2,0.5) + vec3(1,0,0)); // block below that one
+				if(block1 == 0) { // if block to the right is empty
+					if(block2 == 0 && block3 > 0){ // if block above that is empty and block below is not empty
+						stevePosition += vec3(1, 0, 0); // move right
+					} else if (block3 == 0) { // if the block below is empty
+						int counter = -1;
+						while (world.getBlock(stevePosition - vec3(0.5,2,0.5) + vec3(1,counter,0)) == 0){
+							counter--;
+						}
+						stevePosition += vec3(1, counter, 0); // move right one and down as many as we need to go
+					}
+				} else if(block1 != 0 && block2 == 0){
+					stevePosition += vec3(1, 1, 0);
+				}
+				return;
+			case 1: // left
+				block1 = world.getBlock(stevePosition - vec3(0.5,2,0.5) + vec3(-1,1,0)); // block to left
+				block2 = world.getBlock(stevePosition - vec3(0.5,2,0.5) + vec3(-1,2,0)); // block above that one
+				block3 = world.getBlock(stevePosition - vec3(0.5,2,0.5) + vec3(-1,0,0)); // block below that one
+				if(block1 == 0) { // if block to the left is empty
+					if(block2 == 0 && block3 > 0){ // if block above that is empty and block below is not empty
+						stevePosition += vec3(-1, 0, 0); // move left
+					} else if (block3 == 0) { // if the block below is empty
+						int counter = -1;
+						while (world.getBlock(stevePosition - vec3(0.5,2,0.5) + vec3(-1,counter,0)) == 0){
+							counter--;
+						}
+						stevePosition += vec3(-1, counter, 0); // move left one and down as many as we need to go
+					}
+				} else if(block1 != 0 && block2 == 0){
+					stevePosition += vec3(-1, 1, 0);
+				}
+			return;
+			case 2: // up
+				block1 = world.getBlock(stevePosition - vec3(0.5,2,0.5) + vec3(0,1,-1)); // block to up
+				block2 = world.getBlock(stevePosition - vec3(0.5,2,0.5) + vec3(0,2,-1)); // block above that one
+				block3 = world.getBlock(stevePosition - vec3(0.5,2,0.5) + vec3(0,0,-1)); // block below that one
+				if(block1 == 0) { // if block to the up is empty
+					if(block2 == 0 && block3 > 0){ // if block above that is empty and block below is not empty
+						stevePosition += vec3(0, 0, -1); // move up
+					} else if (block3 == 0) { // if the block below is empty
+						int counter = -1;
+						while (world.getBlock(stevePosition - vec3(0.5,2,0.5) + vec3(0,counter,-1)) == 0){
+							counter--;
+						}
+						stevePosition += vec3(0, counter, 1); // move up one and down as many as we need to go
+					}
+				} else if(block1 != 0 && block2 == 0){
+					stevePosition += vec3(0, 1, -1);
+				}
+			return;
+			case 3: // down
+				block1 = world.getBlock(stevePosition - vec3(0.5,2,0.5) + vec3(0,1,1)); // block to down
+				block2 = world.getBlock(stevePosition - vec3(0.5,2,0.5) + vec3(0,2,1)); // block above that one
+				block3 = world.getBlock(stevePosition - vec3(0.5,2,0.5) + vec3(0,0,1)); // block below that one
+				if(block1 == 0) { // if block to the down is empty
+					if(block2 == 0 && block3 > 0){ // if block above that is empty and block below is not empty
+						stevePosition += vec3(0, 0, 1); // move right
+					} else if (block3 == 0) { // if the block below is empty
+						int counter = -1;
+						while (world.getBlock(stevePosition - vec3(0.5,2,0.5) + vec3(0,counter,1)) == 0){
+							counter--;
+						}
+						stevePosition += vec3(0, counter, 1); // move right one and down as many as we need to go
+					}
+				} else if(block1 != 0 && block2 == 0){
+					stevePosition += vec3(0, 1, 1);
+				}
+				return;
+			default:
+				return;
+		}
+	}
 
 	void updateUsingCameraPath(float frametime)  {
 		if (tour) {
@@ -514,7 +623,6 @@ public:
 	}	
 
 	void render(float frametime) {
-		timeElapsed += 0.02f;
 		// Get current frame buffer size.
 		int width, height;
 		glfwGetFramebufferSize(windowManager->getHandle(), &width, &height);
@@ -537,10 +645,11 @@ public:
 		Projection->pushMatrix();
 		Projection->perspective(45.0f, aspect, 0.01f, 100.0f);
 
-		View = glm::translate(View, vec3(gZ, 0, gX));
+		updateMovement(frametime);
 		updateUsingCameraPath(frametime);
 
 		prog->bind();
+
 		glUniformMatrix4fv(prog->getUniform("P"), 1, GL_FALSE, value_ptr(Projection->topMatrix()));
 		glUniformMatrix4fv(prog->getUniform("V"), 1, GL_FALSE, value_ptr(View));
 		glUniform3f(prog->getUniform("lightPos"), -2.0 + lightTrans, 60.0, 2.0);
@@ -552,48 +661,17 @@ public:
 		meshes[1]->draw(prog);
 		meshes[2]->draw(prog);
 		
-		// draw bottom half of steve
+		// draw steve
 		setMaterial(prog, 3); // dark blue for pants
-		setModel(prog, meshes[3], vec3(-17.0f,-6.8,0), 0, 0, 0, vec3(1,1,1));
+		setModel(prog, meshes[3], stevePosition, 0, 0, 0, vec3(1,1,1));
 		meshes[3]->draw(prog);
 		meshes[4]->draw(prog);
-
-		// draw animated top half of steve
-		float steveBendAngle = (sin(glfwGetTime()) - 1.0f) * 25.0f;
-		animateSteve(prog, meshes[5], steveBendAngle);
 		setMaterial(prog, 4); // skin color
 		meshes[5]->draw(prog);
 		meshes[6]->draw(prog);
 		meshes[7]->draw(prog);
 		setMaterial(prog, 2); // shirt color
 		meshes[8]->draw(prog);
-		
-		setMaterial(prog, 0);
-		// Draw animated creeper
-		if (timeElapsed < walkDuration) {
-			// Move creeper towards Steve
-			creeperScale = 1.0f;
-			float t = timeElapsed / walkDuration; 
-			creeperX = (1 - t) * creeperStartX + t * creeperEndX;
-		} else if (timeElapsed < walkDuration + explodeDuration) {
-			// Start explosion
-			exploding = true;
-			float t = (timeElapsed - walkDuration) / explodeDuration;
-			creeperScale = 1.0f + 0.5f * t;
-		} else if (timeElapsed < walkDuration + explodeDuration + delayDuration) {
-			// Delay after explosion before resetting
-			exploding = false;
-			creeperScale = 0;
-		} else {
-			// Reset after explosion and delay
-			timeElapsed = 0.0f;
-			exploding = false;
-			creeperScale = 1.0f;
-			creeperX = creeperStartX;
-		}
-	
-		setModel(prog, meshes[9], vec3(creeperX, -6.8f, 0), 33, 0, 0, vec3(creeperScale, 1, creeperScale));
-		meshes[9]->draw(prog);
 		
 		prog->unbind();
 
@@ -618,7 +696,7 @@ public:
 		glUniformMatrix4fv(skyboxProg->getUniform("P"), 1, GL_FALSE, value_ptr(Projection->topMatrix()));
 		glUniformMatrix4fv(skyboxProg->getUniform("V"), 1, GL_FALSE, value_ptr(view));
 
-		setModel(skyboxProg, meshes[10], vec3(0), 0, 0, 0, vec3(100.0f)); // Scale up
+		setModel(skyboxProg, meshes[10], vec3(0), 0, 0, 0, vec3(1.0f)); // Scale up
 		meshes[10]->draw(skyboxProg);
 
 		skyboxProg->unbind();
@@ -640,7 +718,7 @@ int main(int argc, char *argv[])
 
 	if (argc >= 2)
 	{
-		resourceDir = argv[1];
+		World::seed = atoi(argv[1]);
 	}
 
 	Application *application = new Application();
