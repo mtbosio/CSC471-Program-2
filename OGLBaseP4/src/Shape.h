@@ -11,6 +11,8 @@
 
 class Program;
 
+
+
 class Shape
 {
 public:
@@ -32,6 +34,14 @@ public:
 
 	glm::vec3 min;
 	glm::vec3 max;
+
+	// Bounding sphere
+    struct BoundingSphere {
+        glm::vec3 center;
+        float radius;
+    };
+
+    BoundingSphere boundingSphere;
 	
 private:
 	std::vector<unsigned int> eleBuf;
@@ -52,6 +62,8 @@ private:
 
     // Updates the model matrix after transformations
     void updateModelMatrix();
+	
+	void calculateBoundingSphere();
 };
 
 #endif

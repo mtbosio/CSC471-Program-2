@@ -33,6 +33,8 @@ void Shape::createShape(tinyobj::shape_t &shape)
 	norBuf = shape.mesh.normals;
 	texBuf = shape.mesh.texcoords;
 	eleBuf = shape.mesh.indices;
+
+    calculateBoundingSphere();
 }
 
 /* Compute the bounding box for the shape */
@@ -189,3 +191,37 @@ void Shape::draw(const shared_ptr<Program> prog) const
 void Shape::updateModelMatrix() {
     modelMatrix =  glm::scale(glm::mat4(1.0f), scale) * glm::translate(glm::mat4(1.0f), translation);
 }
+
+void Shape::calculateBoundingSphere() {
+    if (posBuf.empty()) {
+        return;
+    }
+
+    glm::vec3 minPos = glm::vec3(posBuf[0], posBuf[1], posBuf[2]);
+    glm::vec3 maxPos = minPos;
+    glm::vec3 center = glm::vec3(0.0f);
+    size_t numVertices = posBuf.size() / 3;
+
+    // Find the bounding box to get the center and max distance
+    for (size_t i = 0; i < numVertices; ++i) {
+        glm::vec3 vertex(posBuf[i * 3], posBuf[i * 3 + 1], posBuf[i * 3 + 2]);
+        minPos = glm::min(minPos, vertex);
+        maxPos = glm::max(maxPos, vertex);
+        center += vertex;
+    }
+
+    // Compute center and radius
+    center /= float(numVertices);
+    boundingSphere.center = center;
+    boundingSphere.radius = 0.0f;
+
+    for (size_t i = 0; i < numVertices; ++i) {
+        glm::vec3 vertex(posBuf[i * 3], posBuf[i * 3 + 1], posBuf[i * 3 + 2]);
+        float distance = glm::length(vertex - center);
+        boundingSphere.radius = glm::max(boundingSphere.radius, distance);
+    }
+
+    min = minPos;
+    max = maxPos;
+}
+

@@ -18,8 +18,11 @@ glm::vec2 ChunkData::getChunkCoords()
 
 void ChunkData::generateTerrain() {
     FastNoiseLite noise;
-    noise.SetNoiseType(FastNoiseLite::NoiseType_Perlin);
+    noise.SetNoiseType(FastNoiseLite::NoiseType_OpenSimplex2S);
     noise.SetFractalType(FastNoiseLite::FractalType_FBm);
+    // seed - 342378
+    // noise.SetNoiseType(FastNoiseLite::NoiseType_OpenSimplex2);
+    // noise.SetFractalType(FastNoiseLite::FractalType_Ridged);
     noise.SetFractalOctaves(3);
     noise.SetSeed(seed);
     for (int x = 0; x < CHUNK_SIZE; x++) {
@@ -46,8 +49,10 @@ void ChunkData::generateTerrain() {
 }
 void ChunkData::generateTrees() {
     FastNoiseLite noise;
-    noise.SetNoiseType(FastNoiseLite::NoiseType_Perlin);
+    noise.SetNoiseType(FastNoiseLite::NoiseType_OpenSimplex2S);
     noise.SetFractalType(FastNoiseLite::FractalType_FBm);
+    // noise.SetNoiseType(FastNoiseLite::NoiseType_OpenSimplex2); 
+    // noise.SetFractalType(FastNoiseLite::FractalType_Ridged);
     noise.SetFractalOctaves(3);
     noise.SetSeed(seed);
     

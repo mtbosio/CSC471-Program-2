@@ -66,7 +66,11 @@
     "type_traits": "cpp",
     "utility": "cpp",
     "format": "cpp",
-    "unordered_set": "cpp"
+    "unordered_set": "cpp",
+    "forward_list": "cpp",
+    "span": "cpp",
+    "text_encoding": "cpp"
   },
-  "C_Cpp.errorSquiggles": "disabled"
+  "C_Cpp.errorSquiggles": "disabled",
+  "cmake.sourceDirectory": "/Users/mb08eight/Desktop/Desktop - Matt’s MacBook Pro (7)/471/CSC471-Program-4/OGLBaseP4"
 }

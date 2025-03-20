@@ -24,4 +24,5 @@ void main() {
 	float sC = pow(max(dot(normalize(halfV), normal), 0), MatShine);
 	
 	Outcolor = vec4(texColor0.xyz * 0.1 + dC*texColor0.xyz + sC * texColor0.xyz, 1.0);
+
 }

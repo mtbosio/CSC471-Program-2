@@ -34,9 +34,9 @@ void ChunkMesh::generateMesh() {
     glGenBuffers(1, &VBO);
     glGenBuffers(1, &EBO);
 
-    glEnable(GL_CULL_FACE);    // Enable face culling
-    glCullFace(GL_BACK);       // Cull back faces
-    glFrontFace(GL_CCW);
+    //glEnable(GL_CULL_FACE);    // Enable face culling
+    //glCullFace(GL_BACK);       // Cull back faces
+    //glFrontFace(GL_CCW);
 
     glBindVertexArray(VAO);
     

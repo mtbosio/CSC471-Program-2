@@ -8,6 +8,10 @@
 #include <iostream>
 #include <glad/glad.h>
 
+#include "imgui.h"
+#include "imgui_impl_glfw.h"
+#include "imgui_impl_opengl3.h"
+
 #include "GLSL.h"
 #include "Program.h"
 #include "Shape.h"
@@ -29,9 +33,15 @@
 
 #include "Bezier.h"
 #include "Spline.h"
+#include "particleSys.h"
 
 using namespace std;
 using namespace glm;
+
+struct BoundingSphere {
+    glm::vec3 center;
+    float radius;
+};
 
 class Application : public EventCallbacks {
 
@@ -39,21 +49,23 @@ public:
 
 	WindowManager * windowManager = nullptr;
 
-	// Our shader program
-	std::shared_ptr<Program> prog;
-
-	//Our shader program for textures
-	std::shared_ptr<Program> texProg;
-
 	// shader program for terrain
 	std::shared_ptr<Program> voxelProg;
 
 	// shader program for skybox
 	std::shared_ptr<Program> skyboxProg;
 
+	//Our shader program for textures
+	std::shared_ptr<Program> texProg;
+
+	// Particle program
+	std::shared_ptr<Program> partProg;
+
 	// images
 	shared_ptr<Texture> texture0; // texture atlas
 	shared_ptr<Texture> skyboxTexture; // skybox texture
+	shared_ptr<Texture> steve_texture; // steve texture
+	shared_ptr<Texture> diamond_texture; // diamond texture
 
 	std::vector<std::shared_ptr<Shape>> meshes;
 
@@ -79,6 +91,11 @@ public:
 
 	// Steve position
 	vec3 stevePosition = vec3(0,0,0);
+	float steveRotation = 0;
+	vec3 targetStevePosition;      
+	bool isMoving = false;    
+	float moveSpeed = 10.0f;     
+	float rotationSpeed = 180.0f;  
 
 	// light data
 	float lightTrans = 0;
@@ -90,6 +107,14 @@ public:
 	int seed;
 	World world;
 	unordered_map<ChunkCoord, ChunkMesh*> chunkMeshes;
+	vector<vec3> diamondPositions;
+	int diamondsCollected = 0;
+
+	// particle variables
+	particleSys *thePartSystem;
+	float t = 0.0f;
+	float h = 0.01f;
+	bool drawParticle = false;
 
 	void keyCallback(GLFWwindow *window, int key, int scancode, int action, int mods)
 	{
@@ -104,21 +129,6 @@ public:
 		} else if (action == GLFW_RELEASE) {
 			pressedKeys[key] = false;
 		}
-
-		// steve movment
-		if (key == GLFW_KEY_RIGHT && action == GLFW_PRESS){
-			moveSteve(0);
-		}
-		if (key == GLFW_KEY_LEFT && action == GLFW_PRESS){
-			moveSteve(1);
-		}
-		if (key == GLFW_KEY_UP && action == GLFW_PRESS){
-			moveSteve(2);
-		}
-		if (key == GLFW_KEY_DOWN && action == GLFW_PRESS){
-			moveSteve(3);
-		}
-		
 
 		// tour
 		if (key == GLFW_KEY_G && action == GLFW_PRESS){
@@ -136,6 +146,20 @@ public:
 		}
 		if (key == GLFW_KEY_Z && action == GLFW_RELEASE) {
 			glPolygonMode( GL_FRONT_AND_BACK, GL_FILL );
+		}
+
+		// steve movment
+		if (key == GLFW_KEY_RIGHT && action == GLFW_PRESS){
+			moveSteve(0);
+		}
+		if (key == GLFW_KEY_LEFT && action == GLFW_PRESS){
+			moveSteve(1);
+		}
+		if (key == GLFW_KEY_UP && action == GLFW_PRESS){
+			moveSteve(2);
+		}
+		if (key == GLFW_KEY_DOWN && action == GLFW_PRESS){
+			moveSteve(3);
 		}
 	}
 
@@ -196,38 +220,6 @@ public:
 		// Enable z-buffer test.
 		glEnable(GL_DEPTH_TEST);
 
-		// Initialize the GLSL program.
-		prog = make_shared<Program>();
-		prog->setVerbose(true);
-		prog->setShaderNames(resourceDirectory + "/simple_vert.glsl", resourceDirectory + "/simple_frag.glsl");
-		prog->init();
-		prog->addUniform("P");
-		prog->addUniform("V");
-		prog->addUniform("M");
-		prog->addUniform("MatAmb");
-		prog->addUniform("MatDif");
-		prog->addUniform("MatShine");
-		prog->addUniform("MatSpec");
-		prog->addUniform("lightPos");
-		prog->addAttribute("vertPos");
-		prog->addAttribute("vertNor");
-
-		// Initialize the GLSL program.
-		texProg = make_shared<Program>();
-		texProg->setVerbose(true);
-		texProg->setShaderNames(resourceDirectory + "/tex_vert.glsl", resourceDirectory + "/tex_frag0.glsl");
-		texProg->init();
-		texProg->addUniform("P");
-		texProg->addUniform("V");
-		texProg->addUniform("M");
-		texProg->addUniform("flip");
-		texProg->addUniform("Texture0");
-		texProg->addUniform("MatShine");
-		texProg->addUniform("lightPos");
-		texProg->addAttribute("vertPos");
-		texProg->addAttribute("vertNor");
-		texProg->addAttribute("vertTex");
-
 		// voxel shaders
 		voxelProg = make_shared<Program>();
 		voxelProg->setVerbose(true);
@@ -244,6 +236,21 @@ public:
 		voxelProg->addAttribute("vertNor");
 		voxelProg->addAttribute("vertTex");
 
+		// Initialize the GLSL program that we will use for texture mapping
+		texProg = make_shared<Program>();
+		texProg->setVerbose(true);
+		texProg->setShaderNames(resourceDirectory + "/tex_vert.glsl", resourceDirectory + "/tex_frag.glsl");
+		texProg->init();
+		texProg->addUniform("P");
+		texProg->addUniform("V");
+		texProg->addUniform("M");
+		texProg->addUniform("flip");
+		texProg->addUniform("Texture0");
+		texProg->addUniform("MatShine");
+		texProg->addUniform("lightPos");
+		texProg->addAttribute("vertPos");
+		texProg->addAttribute("vertNor");
+		texProg->addAttribute("vertTex");
 
 		//read in a load the textures
 		// grass texture
@@ -257,6 +264,18 @@ public:
 		glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
 		glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
 		glBindTexture(GL_TEXTURE_2D, 0);
+
+		steve_texture = make_shared<Texture>();
+		steve_texture->setFilename(resourceDirectory + "/steve_texture.jpg");
+		steve_texture->init();
+		steve_texture->setUnit(1);
+		steve_texture->setWrapModes(GL_CLAMP_TO_EDGE, GL_CLAMP_TO_EDGE);
+
+		diamond_texture = make_shared<Texture>();
+		diamond_texture->setFilename(resourceDirectory + "/diamond.png");
+		diamond_texture->init();
+		diamond_texture->setUnit(2);
+		diamond_texture->setWrapModes(GL_CLAMP_TO_EDGE, GL_CLAMP_TO_EDGE);
 
 		splinepath[0] = Spline(glm::vec3(-24,5,10), glm::vec3(-22,0,10), glm::vec3(-22,-5, 0), 5);
         splinepath[1] = Spline(glm::vec3(-22,-5, 0), glm::vec3(-22,-5, 0), glm::vec3(-24,-5, -10), 5);
@@ -285,11 +304,36 @@ public:
 		skyboxTexture->loadCubeMap(cubemapFaces);
 		skyboxTexture->setUnit(0);
 
+		// particle program
+		partProg = make_shared<Program>();
+		partProg->setVerbose(true);
+		partProg->setShaderNames(
+			resourceDirectory + "/particle_vert.glsl",
+			resourceDirectory + "/particle_frag.glsl");
+		partProg->init();
+		partProg->addUniform("P");
+		partProg->addUniform("M");
+		partProg->addUniform("V");
+		partProg->addUniform("pColor");
+		partProg->addUniform("alphaTexture");
+		partProg->addAttribute("vertPos");
 
+		thePartSystem = new particleSys(vec3(0, 0, 0));
+		thePartSystem->gpuSetup();
+	}
+
+	void initImGui(GLFWwindow* window) {
+		IMGUI_CHECKVERSION();
+		ImGui::CreateContext();
+		ImGui::StyleColorsDark();  // Use dark theme (optional)
+	
+		// Initialize ImGui for GLFW and OpenGL
+		ImGui_ImplGlfw_InitForOpenGL(window, true);
+		ImGui_ImplOpenGL3_Init("#version 330");
 	}
 
 	void initGeom(const std::string& resourceDirectory) {
-		std::vector<std::string> objFiles = {"cartoon_flower.obj", "steve.obj", "creeper.obj", "cube.obj"};
+		std::vector<std::string> objFiles = {"cartoon_flower.obj", "Steve.obj", "creeper.obj", "cube.obj", "diamond.obj"};
 	
 		int count = 0;
 		for (const auto& file : objFiles) {
@@ -308,12 +352,8 @@ public:
 			for (auto& toShape : TOshapes) { 
 				count += 1;
 				shared_ptr<Shape> shape;
-				if(count == 15){
-					shape = std::make_shared<Shape>(true);
-					cout << "Loaded textured shape!" << endl;
-				} else {
-					shape = std::make_shared<Shape>(false);
-				}
+				shape = std::make_shared<Shape>(true);
+					
 				
 				tinyobj::shape_t mutableShape = toShape; 
 				shape->createShape(mutableShape);
@@ -374,9 +414,13 @@ public:
 		// cube 10
 		normalizeMesh(meshes[10], meshes[10]->min, meshes[10]->max);
 
+		// diamond 11
+		normalizeMesh(meshes[11], meshes[11]->min, meshes[11]->max);
+
 		initChunkData();
 		generateTrees();
 		initChunkMeshes();
+		spawnDiamonds();
 
 		// set camera and steve at correct position
 		initCameraAndSteve();
@@ -408,6 +452,59 @@ public:
 				ChunkCoord pos = {x, z};
 				world.getChunk(pos)->generateTrees();
 			}
+		}
+	}
+	void spawnDiamonds(){
+		for (int x = -GRID_SIZE; x < GRID_SIZE; x++) {
+			for (int z = -GRID_SIZE; z < GRID_SIZE; z++) {
+				if(x == 0 && z  == 0){
+					continue;
+				}
+				ChunkCoord pos = {x, z};
+				diamondPositions.push_back(world.getChunk(pos)->origin + vec3(pos.x * 16 + 0.5, 1.5, pos.z * 16 + 0.5));
+			}
+		}
+	}
+
+	void drawDiamonds(shared_ptr<Program> prog, float deltaTime){
+		static float totalAngle = 0.0f; // accumulated rotation
+		static float time = 0.0f;  // elapsed time
+	
+		totalAngle += glm::radians(45.0f) * deltaTime;  
+		time += deltaTime; 
+	
+		for (glm::vec3& pos : diamondPositions) {
+			float floatHeight = 0.2f * sin(time * 2.0f);  
+			glm::vec3 floatPos = pos + glm::vec3(0.0f, floatHeight, 0.0f);  // vertical offset
+	
+			mat4 Trans = glm::translate(glm::mat4(1.0f), floatPos);
+			mat4 RotY = glm::rotate(glm::mat4(1.0f), totalAngle, vec3(0, 1, 0));
+			mat4 ScaleS = glm::scale(glm::mat4(1.0f), vec3(0.3, 0.3, 0.3));
+			mat4 normTransform = meshes[11]->getModelMatrix();
+	
+			mat4 ctm = Trans * RotY * ScaleS * normTransform;
+			glUniformMatrix4fv(prog->getUniform("M"), 1, GL_FALSE, value_ptr(ctm));
+			meshes[11]->draw(prog); 
+			checkDiamondCollisions(ctm, pos);
+		}
+	}
+	
+	void checkDiamondCollisions(mat4 ctm, vec3 pos){
+		vec3 diamondBoundingSphereCenter = vec3(ctm * vec4(meshes[11]->boundingSphere.center, 1.0f));
+		float diamondBoundingSphereRadius = 0.3 * meshes[11]->getModelMatrix()[0][0] * meshes[11]->boundingSphere.radius;
+
+		vec3 steveBoundingSphereCenter = stevePosition;// + meshes[8]->boundingSphere.center;
+		float steveBoundingSphereRadius = meshes[8]->getModelMatrix()[0][0] * meshes[8]->boundingSphere.radius;
+
+		float distance = glm::distance(diamondBoundingSphereCenter, steveBoundingSphereCenter);
+		float radiusSum = diamondBoundingSphereRadius + steveBoundingSphereRadius;
+
+		if(distance <= radiusSum){
+			diamondPositions.erase(std::remove(diamondPositions.begin(), diamondPositions.end(), pos), diamondPositions.end());	
+			diamondsCollected++;
+			// draw particles
+			thePartSystem->reSet();
+			drawParticle = true;
 		}
 	}
 
@@ -443,12 +540,36 @@ public:
 			ChunkMesh* mesh = pair.second;
 			mat4 Model = glm::translate(mat4(1.0f), vec3(mesh->chunkData.getChunkCoords().x, 0, mesh->chunkData.getChunkCoords().y)); // Offset by chunk size
 			glUniformMatrix4fv(voxelProg->getUniform("M"), 1, GL_FALSE, value_ptr(Model));
-	
+			
 			mesh->render();
 		}
 	}
 
+	void renderUI()
+	{
+		ImGui_ImplOpenGL3_NewFrame();
+		ImGui_ImplGlfw_NewFrame();
+		ImGui::NewFrame();
+
+		ImGui::SetNextWindowPos(ImVec2(10, 10), ImGuiCond_Always); 
+		
+		ImGui::Begin("Overlay", nullptr, 
+					ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoResize | 
+					ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoScrollbar |
+					ImGuiWindowFlags_NoInputs | ImGuiWindowFlags_AlwaysAutoResize);
+
+		ImGui::Text("Diamonds Collected: %d", diamondsCollected);
+		ImGui::End();
+
+		ImGui::Render();
+    	ImGui_ImplOpenGL3_RenderDrawData(ImGui::GetDrawData());	
+	}
+
 	void moveSteve(int direction){
+		if (isMoving) return;
+
+		isMoving = true;
+
 		int block1 = 0;
 		int block2 = 0;
 		int block3 = 0;
@@ -459,17 +580,18 @@ public:
 				block3 = world.getBlock(stevePosition - vec3(0.5,2,0.5) + vec3(1,0,0)); // block below that one
 				if(block1 == 0) { // if block to the right is empty
 					if(block2 == 0 && block3 > 0){ // if block above that is empty and block below is not empty
-						stevePosition += vec3(1, 0, 0); // move right
+						targetStevePosition = stevePosition + vec3(1, 0, 0); // move right
 					} else if (block3 == 0) { // if the block below is empty
 						int counter = -1;
 						while (world.getBlock(stevePosition - vec3(0.5,2,0.5) + vec3(1,counter,0)) == 0){
 							counter--;
 						}
-						stevePosition += vec3(1, counter, 0); // move right one and down as many as we need to go
+						targetStevePosition = stevePosition + vec3(1, counter, 0); // move right one and down as many as we need to go
 					}
 				} else if(block1 != 0 && block2 == 0){
-					stevePosition += vec3(1, 1, 0);
+					targetStevePosition = stevePosition + vec3(1, 1, 0);
 				}
+				steveRotation = 0.0f;
 				return;
 			case 1: // left
 				block1 = world.getBlock(stevePosition - vec3(0.5,2,0.5) + vec3(-1,1,0)); // block to left
@@ -477,17 +599,18 @@ public:
 				block3 = world.getBlock(stevePosition - vec3(0.5,2,0.5) + vec3(-1,0,0)); // block below that one
 				if(block1 == 0) { // if block to the left is empty
 					if(block2 == 0 && block3 > 0){ // if block above that is empty and block below is not empty
-						stevePosition += vec3(-1, 0, 0); // move left
+						targetStevePosition = stevePosition + vec3(-1, 0, 0); // move left
 					} else if (block3 == 0) { // if the block below is empty
 						int counter = -1;
 						while (world.getBlock(stevePosition - vec3(0.5,2,0.5) + vec3(-1,counter,0)) == 0){
 							counter--;
 						}
-						stevePosition += vec3(-1, counter, 0); // move left one and down as many as we need to go
+						targetStevePosition = stevePosition + vec3(-1, counter, 0); // move left one and down as many as we need to go
 					}
 				} else if(block1 != 0 && block2 == 0){
-					stevePosition += vec3(-1, 1, 0);
+					targetStevePosition = stevePosition + vec3(-1, 1, 0);
 				}
+				steveRotation = 180.0f;
 			return;
 			case 2: // up
 				block1 = world.getBlock(stevePosition - vec3(0.5,2,0.5) + vec3(0,1,-1)); // block to up
@@ -495,17 +618,18 @@ public:
 				block3 = world.getBlock(stevePosition - vec3(0.5,2,0.5) + vec3(0,0,-1)); // block below that one
 				if(block1 == 0) { // if block to the up is empty
 					if(block2 == 0 && block3 > 0){ // if block above that is empty and block below is not empty
-						stevePosition += vec3(0, 0, -1); // move up
+						targetStevePosition = stevePosition + vec3(0, 0, -1); // move up
 					} else if (block3 == 0) { // if the block below is empty
 						int counter = -1;
 						while (world.getBlock(stevePosition - vec3(0.5,2,0.5) + vec3(0,counter,-1)) == 0){
 							counter--;
 						}
-						stevePosition += vec3(0, counter, 1); // move up one and down as many as we need to go
+						targetStevePosition = stevePosition + vec3(0, counter, -1); // move up one and down as many as we need to go
 					}
 				} else if(block1 != 0 && block2 == 0){
-					stevePosition += vec3(0, 1, -1);
+					targetStevePosition = stevePosition + vec3(0, 1, -1);
 				}
+				steveRotation = 90.0f;
 			return;
 			case 3: // down
 				block1 = world.getBlock(stevePosition - vec3(0.5,2,0.5) + vec3(0,1,1)); // block to down
@@ -513,20 +637,103 @@ public:
 				block3 = world.getBlock(stevePosition - vec3(0.5,2,0.5) + vec3(0,0,1)); // block below that one
 				if(block1 == 0) { // if block to the down is empty
 					if(block2 == 0 && block3 > 0){ // if block above that is empty and block below is not empty
-						stevePosition += vec3(0, 0, 1); // move right
+						targetStevePosition = stevePosition + vec3(0, 0, 1); // move right
 					} else if (block3 == 0) { // if the block below is empty
 						int counter = -1;
 						while (world.getBlock(stevePosition - vec3(0.5,2,0.5) + vec3(0,counter,1)) == 0){
 							counter--;
 						}
-						stevePosition += vec3(0, counter, 1); // move right one and down as many as we need to go
+						targetStevePosition = stevePosition + vec3(0, counter, 1); // move right one and down as many as we need to go
 					}
 				} else if(block1 != 0 && block2 == 0){
-					stevePosition += vec3(0, 1, 1);
+					targetStevePosition = stevePosition + vec3(0, 1, 1);
 				}
+				steveRotation = 270.0f;
 				return;
 			default:
 				return;
+		}
+	}
+
+	void animateSteve(float deltaTime){
+		if (isMoving) {
+			static float walkTime = 0.0f;
+			walkTime += deltaTime;
+
+			float speed = 8.0f;
+			float maxAngle = 30.0f * (M_PI / 180.0f);
+			
+			vec3 shoulderOffset = vec3(0.0f, 0.3f, 0.0f);
+			float swingAngle = 35.0f * (M_PI/180.0f); 
+
+			// Calculate animation angle
+			static float walkCycle = 0.0f;
+			walkCycle += deltaTime * 8.0f; 
+			float angle = sinf(walkCycle) * swingAngle;
+
+			// right arm
+			mat4 baseModel = meshes[7]->getModelMatrix();
+			mat4 TransToShoulder = glm::translate(mat4(1.0f), shoulderOffset);
+			mat4 ArmRotation = glm::rotate(mat4(1.0f), -angle, vec3(0,0,1)); 
+			mat4 TransBack = glm::translate(mat4(1.0f), -shoulderOffset);
+			float rotX = steveRotation * (M_PI/180.0f);	
+			mat4 BodyRot = glm::rotate(mat4(1.0f), 
+							rotX, 
+							vec3(0,1,0));
+			mat4 ctm = glm::translate(mat4(1.0f), stevePosition) * 
+					BodyRot * 
+					TransToShoulder * 
+					ArmRotation * 
+					TransBack * 
+					baseModel;
+
+			glUniformMatrix4fv(texProg->getUniform("M"), 1, GL_FALSE, value_ptr(ctm));
+			meshes[7]->draw(texProg);
+
+			// left arm
+			baseModel = meshes[5]->getModelMatrix();
+			TransToShoulder = glm::translate(mat4(1.0f), shoulderOffset);
+			ArmRotation = glm::rotate(mat4(1.0f), angle, vec3(0,0,1)); 
+			TransBack = glm::translate(mat4(1.0f), -shoulderOffset);
+			rotX = steveRotation * (M_PI/180.0f);	
+			BodyRot = glm::rotate(mat4(1.0f), 
+						rotX, 
+						vec3(0,1,0));
+			ctm = glm::translate(mat4(1.0f), stevePosition) * 
+				BodyRot * 
+				TransToShoulder * 
+				ArmRotation * 
+				TransBack * 
+				baseModel;
+
+			glUniformMatrix4fv(texProg->getUniform("M"), 1, GL_FALSE, value_ptr(ctm));
+			meshes[5]->draw(texProg);
+
+	
+			// Right leg (forward)
+			setModel(texProg, meshes[3], stevePosition, steveRotation * M_PI / 180.0f, 0, angle, vec3(1,1,1));
+			meshes[3]->draw(texProg);
+	
+			// Left leg (backward)
+			setModel(texProg, meshes[4], stevePosition, steveRotation * M_PI / 180.0f, 0, -angle, vec3(1,1,1));
+			meshes[4]->draw(texProg);
+	
+			// Head (no rotation)
+			setModel(texProg, meshes[6], stevePosition, steveRotation * M_PI / 180.0f, 0, 0, vec3(1,1,1));
+			meshes[6]->draw(texProg);
+	
+			// Torso (no rotation)
+			setModel(texProg, meshes[8], stevePosition, steveRotation * M_PI / 180.0f, 0, 0, vec3(1,1,1));
+			meshes[8]->draw(texProg);
+	
+		} else {
+			setModel(texProg, meshes[3], stevePosition, steveRotation * M_PI / 180, 0, 0, vec3(1,1,1));
+			meshes[3]->draw(texProg); // right leg
+			meshes[4]->draw(texProg); // left leg
+			meshes[5]->draw(texProg); // left arm
+			meshes[6]->draw(texProg); // head
+			meshes[7]->draw(texProg); // right arm
+			meshes[8]->draw(texProg); // torso
 		}
 	}
 
@@ -545,16 +752,6 @@ public:
 			View = glm::lookAt(eye, eye + forward, up);
 		}
 	}
-	
-	/* helper for animating steve to bend over the flower */
-	void animateSteve(shared_ptr<Program> curS, std::shared_ptr<Shape> shape, float steveBendAngle) {
-		mat4 hipPivot = glm::translate(glm::mat4(1.0f), vec3(0, -0.3, 0));
-		mat4 hipRotation = glm::rotate(glm::mat4(1.0f), radians(steveBendAngle), vec3(0, 0, 1));
-		mat4 hipTranslation = glm::translate(glm::mat4(1.0f), vec3(-17.0, -6.8, 0));
-		mat4 hipTransform =  hipTranslation * hipPivot * hipRotation * glm::inverse(hipPivot) * shape->getModelMatrix();
-
-		glUniformMatrix4fv(prog->getUniform("M"), 1, GL_FALSE, value_ptr(hipTransform));
-	}
 
 	/* helper function to set model trasnforms */
   	void setModel(shared_ptr<Program> curS, std::shared_ptr<Shape> shape, vec3 trans, float rotY, float rotX, float rotZ, vec3 sc) {
@@ -567,60 +764,9 @@ public:
 
 		mat4 normTransform = shape->getModelMatrix();
     
-  		mat4 ctm = Trans*RotX*RotY*ScaleS * normTransform;
+  		mat4 ctm = Trans*RotX*RotY*RotZ*ScaleS * normTransform;
   		glUniformMatrix4fv(curS->getUniform("M"), 1, GL_FALSE, value_ptr(ctm));
   	}
-
-	void SetModel(std::shared_ptr<Program> prog, std::shared_ptr<MatrixStack>M) {
-		glUniformMatrix4fv(prog->getUniform("M"), 1, GL_FALSE, value_ptr(M->topMatrix()));
-   	}
-
-	 //helper function to pass material data to the GPU
-	 void setMaterial(shared_ptr<Program> curS, int i) {
-		switch (i) {
-			case 0: // Light Green
-				glUniform3f(curS->getUniform("MatAmb"), 0.1f, 0.25f, 0.1f);  // Soft green ambient
-				glUniform3f(curS->getUniform("MatDif"), 0.4f, 0.9f, 0.4f);   // Bright green diffuse
-				glUniform3f(curS->getUniform("MatSpec"), 0.2f, 0.5f, 0.2f);  // Moderate green specular
-				glUniform1f(curS->getUniform("MatShine"), 50.0f);            // Medium shininess
-				break;
-	
-			case 1: // Light Purple
-				glUniform3f(curS->getUniform("MatAmb"), 0.063, 0.038, 0.1);
-				glUniform3f(curS->getUniform("MatDif"), 0.63, 0.38, 1.0);
-				glUniform3f(curS->getUniform("MatSpec"), 0.3, 0.2, 0.5);
-				glUniform1f(curS->getUniform("MatShine"), 4.0);
-				break;
-	
-			case 2: // Light Blue
-				glUniform3f(curS->getUniform("MatAmb"), 0.05f, 0.1f, 0.2f);   // Soft blue ambient
-				glUniform3f(curS->getUniform("MatDif"), 0.4f, 0.6f, 0.9f);   // Sky blue diffuse
-				glUniform3f(curS->getUniform("MatSpec"), 0.2f, 0.4f, 0.6f);  // Moderate blue specular
-				glUniform1f(curS->getUniform("MatShine"), 60.0f);            // Medium shininess
-				break;
-	
-			case 3: // Dark Blue
-				glUniform3f(curS->getUniform("MatAmb"), 0.02f, 0.02f, 0.1f);  // Deep blue ambient
-				glUniform3f(curS->getUniform("MatDif"), 0.1f, 0.2f, 0.8f);    // Strong blue diffuse
-				glUniform3f(curS->getUniform("MatSpec"), 0.1f, 0.2f, 0.9f);   // High specular highlight
-				glUniform1f(curS->getUniform("MatShine"), 100.0f);            // Higher shininess for a sharper highlight
-				break;
-	
-			case 4: // Light Skin Color
-				glUniform3f(curS->getUniform("MatAmb"), 0.2f, 0.15f, 0.1f);   // Warm skin-tone ambient
-				glUniform3f(curS->getUniform("MatDif"), 0.9f, 0.7f, 0.6f);    // Soft peach diffuse
-				glUniform3f(curS->getUniform("MatSpec"), 0.3f, 0.2f, 0.2f);   // Subtle specular highlight
-				glUniform1f(curS->getUniform("MatShine"), 20.0f);             // Lower shininess for soft skin appearance
-				break;
-	
-			case 5: // Brown Bunny
-				glUniform3f(curS->getUniform("MatAmb"), 0.15f, 0.1f, 0.05f);  // Warm brown ambient
-				glUniform3f(curS->getUniform("MatDif"), 0.5f, 0.3f, 0.1f);    // Earthy brown diffuse
-				glUniform3f(curS->getUniform("MatSpec"), 0.2f, 0.1f, 0.05f);  // Soft brown specular highlight
-				glUniform1f(curS->getUniform("MatShine"), 25.0f);             // Moderate shininess for fur appearance
-				break;
-		}
-	}	
 
 	void render(float frametime) {
 		// Get current frame buffer size.
@@ -643,37 +789,45 @@ public:
 		
 		// Apply perspective projection.
 		Projection->pushMatrix();
-		Projection->perspective(45.0f, aspect, 0.01f, 100.0f);
+		Projection->perspective(45.0f, aspect, 0.01f, 150.0f);
 
 		updateMovement(frametime);
 		updateUsingCameraPath(frametime);
 
-		prog->bind();
+		texProg->bind();
+		glUniformMatrix4fv(texProg->getUniform("P"), 1, GL_FALSE, value_ptr(Projection->topMatrix()));
+		glUniformMatrix4fv(texProg->getUniform("V"), 1, GL_FALSE, value_ptr(View));
+		glUniform3f(texProg->getUniform("lightPos"), 2.0+lightTrans, 60.0, 2.0);
+		glUniform1f(texProg->getUniform("MatShine"), 0.0f);
+		glUniform1i(texProg->getUniform("flip"), 1);
+		steve_texture->bind(texProg->getUniform("Texture0"));
 
-		glUniformMatrix4fv(prog->getUniform("P"), 1, GL_FALSE, value_ptr(Projection->topMatrix()));
-		glUniformMatrix4fv(prog->getUniform("V"), 1, GL_FALSE, value_ptr(View));
-		glUniform3f(prog->getUniform("lightPos"), -2.0 + lightTrans, 60.0, 2.0);
+		// update steve movement and draw him
+		if (isMoving) {
+			vec3 moveDir = targetStevePosition - stevePosition;
+			
+			// Move position
+			float moveStep = moveSpeed * frametime;
+			if (length(moveDir) > moveStep) {
+				stevePosition += normalize(moveDir) * moveStep;
+			} else {
+				stevePosition = targetStevePosition; 
+				isMoving = false;
+			}
+		}
+		
+		// Update animation
+		animateSteve(frametime);
 
-		// draw flower
-		setMaterial(prog, 1); // purple for flower
-		setModel(prog, meshes[0], vec3(-15.8,-7.3f,0), 0, 0, 0, vec3(0.5,0.5f,0.5));
-		meshes[0]->draw(prog);
-		meshes[1]->draw(prog);
-		meshes[2]->draw(prog);
+		glUniformMatrix4fv(texProg->getUniform("P"), 1, GL_FALSE, value_ptr(Projection->topMatrix()));
+		glUniformMatrix4fv(texProg->getUniform("V"), 1, GL_FALSE, value_ptr(View));
+		glUniform3f(texProg->getUniform("lightPos"), 2.0+lightTrans, 60.0, 2.0);
+		glUniform1f(texProg->getUniform("MatShine"), 0.0f);
+		glUniform1i(texProg->getUniform("flip"), 1);
+		diamond_texture->bind(texProg->getUniform("Texture0"));
+		drawDiamonds(texProg, frametime);
 		
-		// draw steve
-		setMaterial(prog, 3); // dark blue for pants
-		setModel(prog, meshes[3], stevePosition, 0, 0, 0, vec3(1,1,1));
-		meshes[3]->draw(prog);
-		meshes[4]->draw(prog);
-		setMaterial(prog, 4); // skin color
-		meshes[5]->draw(prog);
-		meshes[6]->draw(prog);
-		meshes[7]->draw(prog);
-		setMaterial(prog, 2); // shirt color
-		meshes[8]->draw(prog);
-		
-		prog->unbind();
+		texProg->unbind();
 
 		// draw chunks
 		voxelProg->bind();
@@ -706,6 +860,25 @@ public:
 		glDepthMask(GL_TRUE);
 		glDepthFunc(GL_LESS);
 
+		if(drawParticle){
+			// draw particles
+			partProg->bind();
+			texture0->bind(partProg->getUniform("alphaTexture"));
+			CHECKED_GL_CALL(glUniformMatrix4fv(partProg->getUniform("P"), 1, GL_FALSE, value_ptr(Projection->topMatrix())));
+			CHECKED_GL_CALL(glUniformMatrix4fv(partProg->getUniform("V"), 1, GL_FALSE, value_ptr(View)));
+			mat4 matrix = mat4(1.0f);  
+			mat4 particlePos = translate(matrix, vec3(stevePosition.x, stevePosition.y + 1, stevePosition.z));
+			CHECKED_GL_CALL(glUniformMatrix4fv(partProg->getUniform("M"), 1, GL_FALSE, value_ptr(particlePos)));
+			
+			CHECKED_GL_CALL(glUniform3f(partProg->getUniform("pColor"), 0.9, 0.7, 0.7));
+			
+			thePartSystem->drawMe(partProg);
+			thePartSystem->update();
+
+			partProg->unbind();
+			//drawParticle = false;
+		}
+
 		// Pop matrix stacks.
 		Projection->popMatrix();
 	}
@@ -736,6 +909,7 @@ int main(int argc, char *argv[])
 
 	application->init(resourceDir);
 	application->initGeom(resourceDir);
+	application->initImGui(windowManager->getHandle());
 
 	auto lastTime = chrono::high_resolution_clock::now();
 	// Loop until the user closes the window.
@@ -758,6 +932,7 @@ int main(int argc, char *argv[])
 
 		// Render scene.
 		application->render(deltaTime);
+		application->renderUI();
 		// Swap front and back buffers.
 		glfwSwapBuffers(windowManager->getHandle());
 		// Poll for and process events.
